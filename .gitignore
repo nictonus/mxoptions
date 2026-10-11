@@ -5,9 +5,10 @@ __pycache__/
 *.egg-info/
 
 # makepkg leftovers
-/pkg/
-/src/
+/packaging/aur/pkg/
+/packaging/aur/src/
 *.pkg.tar.*
+/packaging/aur/*.tar.gz
 
 # editors
 .vscode/

@@ -1,0 +1,28 @@
+# Maintainer: nictonus <https://github.com/nictonus>
+#
+# This is the package as it goes to the AUR: it builds a released version from its source archive.
+# To install the release from here:   makepkg -si
+
+pkgname=mxoptions
+pkgver=0.9.0
+pkgrel=1
+pkgdesc="Settings for Logitech MX Master mice: buttons, gestures, Actions Ring, wheels and haptics"
+arch=('any')
+url="https://github.com/nictonus/mxoptions"
+license=('MIT')
+depends=('python' 'pyside6' 'python-evdev' 'qt6-declarative' 'qt6-multimedia' 'layer-shell-qt')
+makedepends=('make')
+optdepends=('python-numpy: glossy 3D mouse model and soft shadows')
+install=mxoptions.install
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+check() {
+  cd "$pkgname-$pkgver"
+  make test
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  make DESTDIR="$pkgdir" PREFIX=/usr udevdir=/usr/lib/udev/rules.d install
+}

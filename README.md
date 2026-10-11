@@ -71,10 +71,19 @@ and many ready actions are KDE shortcuts.
 
 ### Arch Linux and derivatives
 
+Download the package from the [latest release](https://github.com/nictonus/mxoptions/releases/latest)
+and install it:
+
 ```sh
-git clone https://github.com/nictonus/mxoptions.git && cd mxoptions
-makepkg -si
+sudo pacman -U mxoptions-*-any.pkg.tar.zst
 systemctl --user enable --now mxoptions.service
+```
+
+Or build the same package yourself:
+
+```sh
+git clone https://github.com/nictonus/mxoptions.git && cd mxoptions/packaging/aur
+makepkg -si
 ```
 
 ### Any distribution, for your user only (no root)

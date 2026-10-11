@@ -41,11 +41,10 @@ Arch, CachyOS, Manjaro: `pyside6 python-evdev qt6-declarative qt6-multimedia lay
 
 ## Встановлення
 
-Arch і похідні:
+Arch і похідні: завантаж пакет з [останнього релізу](https://github.com/nictonus/mxoptions/releases/latest) і встанови:
 
 ```sh
-git clone https://github.com/nictonus/mxoptions.git && cd mxoptions
-makepkg -si
+sudo pacman -U mxoptions-*-any.pkg.tar.zst
 systemctl --user enable --now mxoptions.service
 ```
 

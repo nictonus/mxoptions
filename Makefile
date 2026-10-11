@@ -8,6 +8,7 @@
 #   sudo make udev        install the device access rules (once; see README, "Permissions")
 #   make uninstall-user   remove the per-user installation
 #   sudo make uninstall   remove the system-wide installation
+#   make dist             build the files of a release into dist/ (after its tag is on GitHub)
 #
 # Packagers: make DESTDIR=... PREFIX=/usr udevdir=/usr/lib/udev/rules.d install
 
@@ -31,7 +32,7 @@ python_path = $(shell command -v $(PYTHON))
 substitute = sed -e 's|@BINDIR@|$(bindir)|g' -e 's|@LIBDIR@|$(libdir)|g' -e 's|@DOCDIR@|$(docdir)|g' \
 	-e 's|@PYTHON@|$(python_path)|g'
 
-.PHONY: all build test check wheel run screenshots install install-user uninstall uninstall-user enable disable udev clean
+.PHONY: all build test check wheel dist run screenshots install install-user uninstall uninstall-user enable disable udev clean
 
 all: build
 
@@ -45,7 +46,17 @@ test:
 check: build test
 
 wheel:
-	$(PYTHON) -m build --wheel
+	$(PYTHON) -m build --wheel --no-isolation --outdir dist
+
+# What a release on GitHub carries: the Arch package (built by packaging/aur/PKGBUILD from the
+# tagged source archive, so the tag has to be pushed first), the wheel, and their checksums.
+dist:
+	rm -rf dist build
+	mkdir -p dist build/makepkg
+	$(PYTHON) -m build --wheel --no-isolation --outdir dist
+	cd packaging/aur && PKGDEST="$(CURDIR)/dist" BUILDDIR="$(CURDIR)/build/makepkg" SRCDEST="$(CURDIR)/build/makepkg" makepkg -f
+	rm -rf build *.egg-info
+	cd dist && sha256sum * > SHA256SUMS
 
 run:
 	$(PYTHON) main.py
@@ -107,5 +118,5 @@ udev:
 	-udevadm trigger --sysname-match=uinput
 
 clean:
-	rm -rf build dist *.egg-info pkg src
+	rm -rf build dist *.egg-info packaging/aur/pkg packaging/aur/src
 	find . -name __pycache__ -prune -exec rm -rf {} +
