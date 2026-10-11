@@ -1,0 +1,12 @@
+post_install() {
+  udevadm control --reload-rules 2>/dev/null
+  udevadm trigger --subsystem-match=hidraw 2>/dev/null
+  udevadm trigger --sysname-match=uinput 2>/dev/null
+  echo ":: Start MX Options now and at every login (as your own user, not root):"
+  echo "::   systemctl --user enable --now mxoptions.service"
+  echo ":: Stop other programs that drive the mouse (logid, Solaar) or they will fight over its buttons."
+}
+
+post_upgrade() {
+  echo ":: Restart MX Options to run the new version:  systemctl --user restart mxoptions.service"
+}

@@ -1,0 +1,15 @@
+[Unit]
+Description=MX Options: buttons, gestures, wheel and haptics of Logitech MX mice
+Documentation=file://@DOCDIR@/README.md
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=@BINDIR@/mxoptions --background
+Restart=on-failure
+RestartSec=3
+# Stopping hands every button and wheel back to the mouse's own firmware; give it a moment to do so.
+TimeoutStopSec=8
+
+[Install]
+WantedBy=graphical-session.target

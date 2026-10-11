@@ -1,0 +1,10 @@
+# MX Options: let the person sitting at the computer talk to their Logitech mouse and send the
+# key presses, clicks and scrolling that button actions are made of. "uaccess" grants access to
+# whoever is logged in on the local seat, and to nobody else.
+
+# Logitech HID++ devices, on a USB receiver or cable (046d) and over Bluetooth (bus 0005)
+ACTION!="remove", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", TAG+="uaccess"
+ACTION!="remove", SUBSYSTEM=="hidraw", KERNELS=="0005:046D:*", TAG+="uaccess"
+
+# The kernel's virtual input device, for keyboard shortcuts, clicks and smooth scrolling
+KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"

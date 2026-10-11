@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=MX Options
+GenericName=Mouse Settings
+GenericName[uk]=Налаштування миші
+Comment=Buttons, gestures, scrolling and haptics for Logitech MX mice
+Comment[uk]=Кнопки, жести, прокрутка та вібровідгук для мишей Logitech MX
+Exec=mxoptions
+Icon=mxoptions
+Terminal=false
+Categories=Settings;HardwareSettings;
+Keywords=mouse;logitech;mx master;gestures;haptics;
+StartupWMClass=mxoptions

@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mxoptions"
+dynamic = ["version"]
+description = "Settings for Logitech MX Master mice on Linux: buttons, gestures, Actions Ring, wheel and haptics"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+keywords = ["logitech", "mx master", "mouse", "hid++", "gestures", "haptics", "kde"]
+classifiers = [
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Hardware",
+]
+dependencies = ["PySide6>=6.6", "evdev>=1.6"]
+
+[project.optional-dependencies]
+render = ["numpy"]  # the glossy 3D model and soft shadows
+
+[project.scripts]
+mxoptions = "mxoptions.app:main"
+
+[tool.setuptools.packages.find]
+include = ["mxoptions*"]
+
+[tool.setuptools.package-data]
+mxoptions = ["assets/*.svg", "ui/*.qml"]
+
+[tool.setuptools.dynamic]
+version = { attr = "mxoptions.__version__" }

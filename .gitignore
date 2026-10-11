@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+/build/
+/dist/
+*.egg-info/
+
+# makepkg leftovers
+/pkg/
+/src/
+*.pkg.tar.*
+
+# editors
+.vscode/
+.idea/
