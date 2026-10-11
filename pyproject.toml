@@ -20,6 +20,10 @@ classifiers = [
 ]
 dependencies = ["PySide6>=6.6", "evdev>=1.6"]
 
+[project.urls]
+Homepage = "https://github.com/nictonus/mxoptions"
+Issues = "https://github.com/nictonus/mxoptions/issues"
+
 [project.optional-dependencies]
 render = ["numpy"]  # the glossy 3D model and soft shadows
 

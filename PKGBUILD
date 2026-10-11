@@ -9,6 +9,7 @@ pkgver=0.9.0
 pkgrel=1
 pkgdesc="Settings for Logitech MX Master mice: buttons, gestures, Actions Ring, wheel and haptics"
 arch=('any')
+url="https://github.com/nictonus/mxoptions"
 license=('MIT')
 depends=('python' 'pyside6' 'python-evdev' 'qt6-declarative' 'qt6-multimedia' 'layer-shell-qt')
 makedepends=('make')

@@ -7,7 +7,8 @@
 [English](README.md) — повна документація там.
 
 > **Написано ШІ.** Увесь проєкт (код, інтерфейс, звуки, тести й ця документація) написав
-> [Claude](https://claude.com/claude-code), ШІ-модель Anthropic, у Claude Code. Людина, nictonus,
+> [Claude](https://claude.com/claude-code), ШІ-модель Anthropic, у Claude Code. Людина,
+> [nictonus](https://github.com/nictonus),
 > ставила задачі й перевіряла кожну збірку на справжній MX Master 4.
 
 > **Неофіційна програма.** Не пов'язана з Logitech і не схвалена нею.
@@ -43,6 +44,7 @@ Arch, CachyOS, Manjaro: `pyside6 python-evdev qt6-declarative qt6-multimedia lay
 Arch і похідні:
 
 ```sh
+git clone https://github.com/nictonus/mxoptions.git && cd mxoptions
 makepkg -si
 systemctl --user enable --now mxoptions.service
 ```

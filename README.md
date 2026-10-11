@@ -8,8 +8,8 @@ service and a D-Bus API for other programs.
 
 > **Written by an AI.** Every part of this project (the code, the interface, the sounds, the tests
 > and this documentation) was written by [Claude](https://claude.com/claude-code), Anthropic's AI
-> model, working in Claude Code. A human, nictonus, directed the work and tried each build on a real
-> MX Master 4. Read the code with that in mind, and see
+> model, working in Claude Code. A human, [nictonus](https://github.com/nictonus), directed the work
+> and tried each build on a real MX Master 4. Read the code with that in mind, and see
 > [Known limits](#known-limits) for what has and has not been checked on hardware.
 
 > **Unofficial.** Not affiliated with or endorsed by Logitech. "Logitech", "MX Master", "Logi
@@ -72,7 +72,7 @@ and many ready actions are KDE shortcuts.
 ### Arch Linux and derivatives
 
 ```sh
-git clone <this repository> mxoptions && cd mxoptions
+git clone https://github.com/nictonus/mxoptions.git && cd mxoptions
 makepkg -si
 systemctl --user enable --now mxoptions.service
 ```
@@ -82,6 +82,7 @@ systemctl --user enable --now mxoptions.service
 Install the requirements above, then:
 
 ```sh
+git clone https://github.com/nictonus/mxoptions.git && cd mxoptions
 make install-user     # into ~/.local
 make enable           # start now and at every login
 ```
