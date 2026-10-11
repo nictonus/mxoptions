@@ -6,7 +6,6 @@ pkgbase = mxoptions
 	install = mxoptions.install
 	arch = any
 	license = MIT
-	makedepends = make
 	depends = python
 	depends = pyside6
 	depends = python-evdev

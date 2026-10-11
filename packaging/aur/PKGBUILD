@@ -2,6 +2,7 @@
 #
 # This is the package as it goes to the AUR: it builds a released version from its source archive.
 # To install the release from here:   makepkg -si
+# To publish a new version:            make aur   (from the top of the source tree)
 
 pkgname=mxoptions
 pkgver=0.9.0
@@ -11,7 +12,6 @@ arch=('any')
 url="https://github.com/nictonus/mxoptions"
 license=('MIT')
 depends=('python' 'pyside6' 'python-evdev' 'qt6-declarative' 'qt6-multimedia' 'layer-shell-qt')
-makedepends=('make')
 optdepends=('python-numpy: glossy 3D mouse model and soft shadows')
 install=mxoptions.install
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")

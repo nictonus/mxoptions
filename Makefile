@@ -9,6 +9,7 @@
 #   make uninstall-user   remove the per-user installation
 #   sudo make uninstall   remove the system-wide installation
 #   make dist             build the files of a release into dist/ (after its tag is on GitHub)
+#   make aur              publish packaging/aur to the AUR (needs an AUR account with your SSH key)
 #
 # Packagers: make DESTDIR=... PREFIX=/usr udevdir=/usr/lib/udev/rules.d install
 
@@ -32,7 +33,7 @@ python_path = $(shell command -v $(PYTHON))
 substitute = sed -e 's|@BINDIR@|$(bindir)|g' -e 's|@LIBDIR@|$(libdir)|g' -e 's|@DOCDIR@|$(docdir)|g' \
 	-e 's|@PYTHON@|$(python_path)|g'
 
-.PHONY: all build test check wheel dist run screenshots install install-user uninstall uninstall-user enable disable udev clean
+.PHONY: all build test check wheel dist aur run screenshots install install-user uninstall uninstall-user enable disable udev clean
 
 all: build
 
@@ -116,6 +117,17 @@ udev:
 	-udevadm control --reload-rules
 	-udevadm trigger --subsystem-match=hidraw
 	-udevadm trigger --sysname-match=uinput
+
+# The AUR keeps every package in a git repository of its own; pushing to it publishes.
+aur:
+	cd packaging/aur && makepkg --printsrcinfo | diff -q - .SRCINFO
+	rm -rf build/aur
+	git clone ssh://aur@aur.archlinux.org/mxoptions.git build/aur
+	cp packaging/aur/PKGBUILD packaging/aur/.SRCINFO packaging/aur/mxoptions.install build/aur/
+	cd build/aur && git add PKGBUILD .SRCINFO mxoptions.install \
+		&& git commit -m "mxoptions $$(sed -n 's/^\tpkgver = //p' .SRCINFO)-$$(sed -n 's/^\tpkgrel = //p' .SRCINFO)" \
+		&& git push origin HEAD:master
+	rm -rf build
 
 clean:
 	rm -rf build dist *.egg-info packaging/aur/pkg packaging/aur/src
