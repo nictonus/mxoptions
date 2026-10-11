@@ -15,7 +15,7 @@ makedepends=('make')
 optdepends=('python-numpy: glossy 3D mouse model and soft shadows')
 install=mxoptions.install
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('20e4c6c2cd739366cbbd422587beff329d8a6a6f756845202358f835f5cb089b')
 
 check() {
   cd "$pkgname-$pkgver"

@@ -1,0 +1,20 @@
+pkgbase = mxoptions
+	pkgdesc = Settings for Logitech MX Master mice: buttons, gestures, Actions Ring, wheels and haptics
+	pkgver = 0.9.0
+	pkgrel = 1
+	url = https://github.com/nictonus/mxoptions
+	install = mxoptions.install
+	arch = any
+	license = MIT
+	makedepends = make
+	depends = python
+	depends = pyside6
+	depends = python-evdev
+	depends = qt6-declarative
+	depends = qt6-multimedia
+	depends = layer-shell-qt
+	optdepends = python-numpy: glossy 3D mouse model and soft shadows
+	source = mxoptions-0.9.0.tar.gz::https://github.com/nictonus/mxoptions/archive/refs/tags/v0.9.0.tar.gz
+	sha256sums = 20e4c6c2cd739366cbbd422587beff329d8a6a6f756845202358f835f5cb089b
+
+pkgname = mxoptions
