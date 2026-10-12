@@ -4,7 +4,7 @@ import logging
 import threading
 import time
 
-from evdev import UInput, ecodes as e
+from evdev import AbsInfo, UInput, ecodes as e
 
 log = logging.getLogger(__name__)
 
@@ -30,6 +30,15 @@ ASCII_KEYS.update({c: (k, True) for c, k in zip(_SHIFTED, _PLAIN_KEYS)})
 def key_code(name):
     code = getattr(e, name, None)
     return code if isinstance(code, int) else None
+
+
+class _Device(UInput):
+    """A virtual device that is only written to. python-evdev would also open the new device's
+    event node to read it back, and waits two seconds for the permission to do so, which an
+    ordinary user never gets."""
+
+    def _find_device(self, *_args):
+        return None
 
 
 class _Wheel:
@@ -64,8 +73,8 @@ class _Wheel:
 class VirtualInput:
     def __init__(self):
         keys = [code for code in e.keys if 0 < code < 0x100]  # everything below BTN_MISC
-        self._kbd = UInput({e.EV_KEY: keys}, name="MX Options virtual keyboard", vendor=0x1D6B, product=0x4D58)
-        self._mouse = UInput(
+        self._kbd = _Device({e.EV_KEY: keys}, name="MX Options virtual keyboard", vendor=0x1D6B, product=0x4D58)
+        self._mouse = _Device(
             {
                 e.EV_KEY: [getattr(e, b) for b in MOUSE_BUTTONS],
                 e.EV_REL: [e.REL_X, e.REL_Y, e.REL_WHEEL, e.REL_HWHEEL, e.REL_WHEEL_HI_RES, e.REL_HWHEEL_HI_RES],
@@ -144,6 +153,51 @@ class VirtualInput:
             for etype, code, value in wheel.events(delta):
                 self._mouse.write(etype, code, value)
             self._mouse.syn()
+
+
+class AbsolutePointer:
+    """A virtual pointer that says where on the desktop it is instead of how far it moved, which
+    is the one way a program can put the pointer somewhere on Wayland. The compositor spreads its
+    range over the whole desktop, as it does for the pointer of a virtual machine."""
+
+    RANGE = 0x10000
+
+    def __init__(self):
+        axis = AbsInfo(value=0, min=0, max=self.RANGE - 1, fuzz=0, flat=0, resolution=0)
+        # The buttons are never pressed; they are what makes this a pointer in the eyes of the system.
+        self._dev = _Device({e.EV_KEY: [e.BTN_LEFT, e.BTN_RIGHT], e.EV_ABS: [(e.ABS_X, axis), (e.ABS_Y, axis)]},
+                            name="MX Options virtual pointer", vendor=0x1D6B, product=0x4D5A)
+        self._last = None
+
+    def move(self, point, desktop):
+        """Put the pointer at ``point`` (x, y) of the ``desktop`` (x, y, width, height), in its pixels."""
+        left, top, width, height = desktop
+        x = int((min(max(point[0] - left, 0), width - 1) + 0.5) * self.RANGE / width)
+        y = int((min(max(point[1] - top, 0), height - 1) + 0.5) * self.RANGE / height)
+        if (x, y) == self._last:  # the same place as last time is no event to the system: step aside first
+            self._write(x + (1 if x < self.RANGE - 1 else -1), y)
+        self._write(x, y)
+        self._last = (x, y)
+
+    def _write(self, x, y):
+        self._dev.write(e.EV_ABS, e.ABS_X, x)
+        self._dev.write(e.EV_ABS, e.ABS_Y, y)
+        self._dev.syn()
+
+    def close(self):
+        try:
+            self._dev.close()
+        except OSError:
+            pass
+
+
+def create_pointer():
+    """Return an AbsolutePointer, or None when /dev/uinput is not usable."""
+    try:
+        return AbsolutePointer()
+    except Exception as err:
+        log.warning("uinput unavailable: %s", err)
+        return None
 
 
 def create():

@@ -204,7 +204,6 @@ class GesturesPage(ScrollPage):
         self.trigger = Segmented([("release", _("On release")), ("auto", _("At once")), ("repeat", _("Repeating"))])
         self.trigger.selected.connect(lambda value: self._set("trigger", value))
         self.trigger_row = card.add(Row(_("When a swipe fires"), None, self.trigger))
-        self.trigger_hint = card.add_plain(hint_label(""))
         self.min_mm = card.add(SliderRow(
             _("Shortest swipe"), 1.0, 12.0, 0.5, _("{:.1f} mm"), hint=_("Move less than this and it counts as a press."),
             low_label=_("Sensitive"), high_label=_("Calm"),
@@ -344,7 +343,7 @@ class GesturesPage(ScrollPage):
         cfg = self.store.cfg
         settings = cfg["gestures"]
         self.trigger.set_value(settings["trigger"])
-        self.trigger_hint.setText({
+        self.trigger_row.set_hint({
             "release": _("The swipe is judged as a whole when you let go of the button. The most accurate."),
             "auto": _("A long, clear swipe runs straight away; anything shorter or less clear is judged when you let go."),
             "repeat": _("Like \"At once\", and the action runs again as you keep moving: handy for volume or switching desktops."),

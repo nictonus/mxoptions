@@ -143,7 +143,10 @@ QToolTip {{ background: {CARD}; color: {TEXT}; border: 1px solid {BORDER}; paddi
 #cardTitle {{ font-size: 11.5pt; font-weight: 600; }}
 #rowTitle {{ font-weight: 500; }}
 #rowHint, #hint {{ color: {MUTED}; font-size: 9.5pt; }}
+#infoBubble {{ background: {CARD_HOVER}; border: 1px solid {mix(BORDER, TEXT, 0.18)}; border-radius: 10px; }}
+#infoText {{ color: {TEXT}; font-size: 9.5pt; }}
 #valueLabel {{ color: {ACCENT_INK}; font-weight: 600; }}
+#pairingCode {{ color: {ACCENT_INK}; font-family: monospace; font-size: 22pt; font-weight: 700; letter-spacing: 3px; }}
 #separator {{ background: {BORDER}; max-height: 1px; min-height: 1px; border: none; }}
 #banner {{ background: {banner_bg}; border: 1px solid {banner_border}; border-radius: 10px; color: {banner_text}; padding: 9px 14px; }}
 

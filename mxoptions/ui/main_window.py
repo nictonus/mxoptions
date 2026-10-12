@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 from .. import APP_NAME, device
 from ..i18n import _
 from . import theme
+from .flow_page import FlowPage
 from .gestures_page import GesturesPage
 from .pages import ButtonsPage, DevicePage, HapticsPage, PointScrollPage
 from .ring_page import RingPage
@@ -99,6 +100,7 @@ class MainWindow(QMainWindow):
             (_("Point & scroll"), PointScrollPage(store)),
             (_("Haptics"), HapticsPage(store)),
             (_("Actions Ring"), RingPage(store)),
+            (_("Flow"), FlowPage(store)),
             (_("Device & app"), DevicePage(store)),
         ]
         for index, (title, page) in enumerate(pages):

@@ -14,7 +14,7 @@ from ..i18n import _
 from . import ring, theme
 from .action_picker import ActionList
 from .pages import BUTTON_TITLES
-from .widgets import ElidedButton, Row, Segmented, SliderRow, SwatchRow, hint_label, ui_scale
+from .widgets import ElidedButton, InfoButton, Row, Segmented, SliderRow, SwatchRow, hint_label, titled, ui_scale
 
 ICON_CHOICES = (
     "folder", "folder-favorites", "starred", "emblem-favorite", "go-home", "user-identity",
@@ -275,7 +275,11 @@ class RingPage(QWidget):
         heading = QHBoxLayout()
         title = QLabel(_("Actions Ring"))
         title.setObjectName("pageTitle")
-        heading.addWidget(title, 1)
+        heading.addLayout(titled(title, InfoButton(
+            _("Bubbles around your cursor. A bubble runs an action or opens its own ring of bubbles.") + "\n\n" + _(
+                "Press the button and the ring opens around the cursor. Click a bubble, or keep the button held, "
+                "point at a bubble and let go. Over a dial, turn the wheel or the thumb wheel."
+            ))), 1)
         self.style = Segmented([("bubbles", _("Bubbles")), ("pie", _("Pie")), ("grid", _("Tiles"))])
         self.style.selected.connect(lambda value: self.store.set("ring", "style", value))
         heading.addWidget(self.style, 0, Qt.AlignmentFlag.AlignBottom)
@@ -286,10 +290,6 @@ class RingPage(QWidget):
         presets.setMenu(self.presets_menu)
         heading.addWidget(presets, 0, Qt.AlignmentFlag.AlignBottom)
         left.addLayout(heading)
-        subtitle = QLabel(_("Bubbles around your cursor. A bubble runs an action or opens its own ring of bubbles."))
-        subtitle.setObjectName("pageSubtitle")
-        subtitle.setWordWrap(True)
-        left.addWidget(subtitle)
 
         crumbs = QHBoxLayout()
         self.up = QPushButton("‹  " + _("Back"))
@@ -304,12 +304,6 @@ class RingPage(QWidget):
 
         self.preview = ring.RingPreview()
         left.addWidget(self.preview, 1)
-        self.usage = hint_label(_(
-            "Press the button and the ring opens around the cursor. Click a bubble, or keep the button held, "
-            "point at a bubble and let go. Over a dial, turn the wheel or the thumb wheel."
-        ))
-        self.usage.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        left.addWidget(self.usage)
         self.size = SliderRow(_("Ring size"), 0.7, 1.5, 0.05, "{:.0%}")
         self.size.changed.connect(lambda value: self.store.set("ring", "size", round(value, 2)))
         left.addWidget(self.size)

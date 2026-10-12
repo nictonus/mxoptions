@@ -129,6 +129,7 @@ STRINGS = {
     "Easy-Switch 1": "Easy-Switch 1",
     "Easy-Switch 2": "Easy-Switch 2",
     "Easy-Switch 3": "Easy-Switch 3",
+    "Move to the other computer (Flow)": "Перейти на інший комп'ютер (Flow)",
 
     # point & scroll
     "Pointer speed and how the wheels behave.": "Швидкість вказівника та поведінка коліс.",
@@ -380,6 +381,163 @@ STRINGS = {
     "Feel the steps": "Відчутні кроки",
     "This wheel turns smoothly, so each step of volume, tabs, desktops, brightness or zoom gets a tick.":
         "Це коліщатко крутиться плавно, тому кожен крок гучності, вкладок, стільниць, яскравості чи масштабу дає короткий тик.",
+
+    # firmware
+    # Flow
+    "Flow": "Flow",
+    "One mouse on two computers. Push the pointer past the edge of the screen and the mouse moves on to the other "
+    "computer, together with what you copied: text, pictures and files. Both computers run MX Options, are on the "
+    "same network and are paired with the mouse on different Easy-Switch channels.":
+        "Одна миша на два комп'ютери. Проведіть вказівник за край екрана — і миша перейде на інший комп'ютер разом "
+        "зі скопійованим: текстом, зображеннями й файлами. На обох комп'ютерах працює MX Options, вони в одній мережі, "
+        "а миша спарена з ними на різних каналах Easy-Switch.",
+    "Click a place next to this computer to put the other one there. It follows by itself.":
+        "Клацніть місце поруч із цим комп'ютером, щоб поставити туди інший. Той підлаштується сам.",
+    "This computer": "Цей комп'ютер",
+    "The other one": "Інший",
+    "the other computer": "іншим комп'ютером",
+    "Flow needs Python 3.13 or newer on this computer.": "Для Flow на цьому комп'ютері потрібен Python 3.13 або новіший.",
+    "Pair this computer with another one to begin.": "Щоб почати, спаруйте цей комп'ютер з іншим.",
+    "Flow is off.": "Flow вимкнено.",
+    "Cannot listen for the other computer: {}": "Не вдається чекати на інший комп'ютер: {}",
+    "Looking for {}…": "Шукаю зв'язок з {}…",
+    "Connected to {}. It has not seen the mouse yet: switch the mouse to it once with the Easy-Switch button, and it "
+    "will know its channel from then on.":
+        "З'єднано з {}. Він ще не бачив мишу: перемкніть мишу на нього один раз кнопкою Easy-Switch — відтоді він "
+        "знатиме свій канал.",
+    "Connected to {}. This computer has not seen the mouse yet: switch the mouse to it once with the Easy-Switch "
+    "button, and it will know its channel from then on.":
+        "З'єднано з {}. Цей комп'ютер ще не бачив мишу: перемкніть мишу на нього один раз кнопкою Easy-Switch — "
+        "відтоді він знатиме свій канал.",
+    "Connected to {name}, but both computers believe they are on Easy-Switch channel {channel}. Switch the mouse to "
+    "each of them once with the Easy-Switch button.":
+        "З'єднано з {name}, але обидва комп'ютери вважають, що вони на каналі Easy-Switch {channel}. Перемкніть мишу "
+        "на кожен із них по разу кнопкою Easy-Switch.",
+    "Connected to {}. The screen edge is only watched on KDE Plasma: here, give a button, a gesture or a ring bubble "
+    "the action “Move to the other computer (Flow)”.":
+        "З'єднано з {}. За краєм екрана програма стежить лише в KDE Plasma: тут призначте кнопці, жесту або бульбашці "
+        "кільця дію «Перейти на інший комп'ютер (Flow)».",
+    "Connected to {}. Push the pointer past the lit edge to cross.":
+        "З'єднано з {}. Щоб перейти, проведіть вказівник за підсвічений край.",
+
+    "Pairing": "Спарювання",
+    "One computer shows a six-digit code, you type it on the other, and the two agree on a key that everything "
+    "between them is encrypted with. The code itself is never sent, and three wrong tries withdraw it.":
+        "Один комп'ютер показує шестизначний код, ви вводите його на іншому, і вони домовляються про ключ, яким "
+        "шифрується все між ними. Сам код мережею не передається, а після трьох хибних спроб він скасовується.",
+    "Paired with {}": "Спаровано з {}",
+    "Connected, everything between the two is encrypted.": "З'єднано, усе між ними зашифровано.",
+    "Not connected right now.": "Зараз не з'єднано.",
+    "Forget": "Забути",
+    "Forget the other computer? To use Flow again the two have to be paired anew.":
+        "Забути інший комп'ютер? Щоб знову користуватись Flow, їх доведеться спарувати наново.",
+    "Pair with another computer": "Спарувати з іншим комп'ютером",
+    "Press this on one of the two computers. On the other, open this page: it finds this computer by itself and asks "
+    "for the code.":
+        "Натисніть це на одному з двох комп'ютерів. На іншому відкрийте цю сторінку: він сам знайде цей комп'ютер "
+        "і спитає код.",
+    "Show a code": "Показати код",
+    "Type this code on the other computer": "Введіть цей код на іншому комп'ютері",
+    "On the other computer, open Flow in MX Options: this computer is listed there. The code is valid for {seconds} "
+    "more seconds; wrong tries left: {left}.":
+        "На іншому комп'ютері відкрийте Flow в MX Options: цей комп'ютер там є у списку. Код дійсний ще {seconds} с; "
+        "хибних спроб лишилось: {left}.",
+    "{} shows a pairing code": "{} показує код спарювання",
+    "Type the six digits it shows.": "Введіть шість цифр, які він показує.",
+    "Pair": "Спарувати",
+    "That was not the code. Look at the other computer again.": "Код не той. Гляньте на інший комп'ютер ще раз.",
+    "The other computer no longer shows a code. Press “Show a code” there again.":
+        "Інший комп'ютер уже не показує код. Натисніть там «Показати код» ще раз.",
+    "The other computer did not answer. Is a firewall in the way?": "Інший комп'ютер не відповів. Чи не заважає фаєрвол?",
+    "This computer's address: {}": "Адреса цього комп'ютера: {}",
+
+    "Crossing": "Перехід",
+    "Push past the edge": "Продавити за край",
+    "How far the mouse has to keep moving once the pointer is at the edge. A longer push keeps the pointer on this "
+    "computer when you only aim at something near the edge.":
+        "Скільки ще треба вести мишу, коли вказівник уже біля краю. Що довше, то менше шансів проскочити на інший "
+        "комп'ютер, коли ви просто цілитесь у щось біля краю.",
+    "At a touch": "Від дотику",
+    "Firmly": "З натиском",
+    "Keep the corners free": "Не чіпати кути",
+    "This much of the edge, at each of its ends, does not lead across, so that the corners of the screen go on doing "
+    "what they do. On the picture above these are the dark ends of the lit edge.":
+        "Така частка краю з кожного його кінця не веде на інший комп'ютер, тож кути екрана працюють як завжди. "
+        "На малюнку вище це темні кінці підсвіченого краю.",
+    "Cross while a full-screen window is in front": "Переходити, коли попереду повноекранне вікно",
+    "Off, a game or a film in full screen keeps the mouse however hard you push.":
+        "Якщо вимкнено, гра чи фільм на весь екран не відпустять мишу, хоч як тисни.",
+
+    "What goes along": "Що переходить разом із мишею",
+    "Copied text and pictures": "Скопійований текст і зображення",
+    "What you copied on one computer can be pasted on the other after crossing.":
+        "Скопійоване на одному комп'ютері можна вставити на іншому після переходу.",
+    "Copied files and folders": "Скопійовані файли й теки",
+    "Copy them in the file manager, cross, and paste. They are sent over when you cross and wait on the other computer "
+    "for a day.":
+        "Скопіюйте їх у файловому менеджері, перейдіть і вставте. Вони надсилаються під час переходу й чекають на "
+        "іншому комп'ютері добу.",
+    "Only text can cross here: files and pictures need KDE's clipboard service (the Python bindings of KGuiAddons).":
+        "Тут переходить лише текст: для файлів і зображень потрібна служба буфера обміну KDE (Python-прив'язки "
+        "KGuiAddons).",
+    "Largest amount in one go": "Найбільший обсяг за раз",
+    "More than this stays behind, so that a huge folder left on the clipboard is not sent by accident.":
+        "Більше за це лишається, щоб випадково не відправити величезну теку, яка просто була в буфері.",
+    "No limit": "Без обмеження",
+    "Sending {count} file(s) to {name}": "Надсилаю файли ({count}) на {name}",
+    "Receiving {count} file(s) from {name}": "Отримую файли ({count}) з {name}",
+    "{done} of {total}": "{done} з {total}",
+    "{}/s": "{}/с",
+    "less than a minute left": "лишилось менше хвилини",
+    "about {} min left": "лишилось близько {} хв",
+    "about {hours} h {minutes} min left": "лишилось близько {hours} год {minutes} хв",
+    "MX Options is bringing {count} file(s) ({size}) over from {name}. Paste again when they have arrived.":
+        "MX Options переносить файли ({count}, {size}) з {name}. Вставте ще раз, коли вони прийдуть.",
+    "{count} file(s), {size}, are coming over from {name}. They can be pasted here once they have arrived; the Flow "
+    "page shows how far they are.":
+        "З {name} переносяться файли ({count}, {size}). Їх можна буде вставити тут, коли вони прийдуть; на сторінці "
+        "Flow видно, скільки вже є.",
+    "Copied on {name}: {count} file(s) are on the clipboard here. Paste them where you want them.":
+        "Скопійоване на {name} (файлів: {count}) уже в буфері обміну тут. Вставте, куди треба.",
+    "The files copied on {name} are larger than the {limit} MB set for Flow, so they were not brought over.":
+        "Файли, скопійовані на {name}, більші за {limit} МБ, задані для Flow, тому їх не перенесено.",
+    "Too many files were copied on {name} to bring them over.": "На {name} скопійовано забагато файлів, щоб їх переносити.",
+    "There is not enough room on this disk for the files copied on {name}.":
+        "На цьому диску бракує місця для файлів, скопійованих на {name}.",
+    "The files copied on {name} could not be brought over.": "Файли, скопійовані на {name}, не вдалося перенести.",
+
+    "Setting it up by hand": "Налаштування вручну",
+    "For networks where the computers cannot find each other: give one of them the other's address, and both the same "
+    "key. Each listens on TCP port {port}; finding each other and pairing by code also use UDP port {port} and TCP "
+    "port {pair}.":
+        "Для мереж, де комп'ютери не можуть знайти один одного: вкажіть одному з них адресу іншого, а обом — той "
+        "самий ключ. Кожен слухає TCP-порт {port}; для пошуку один одного й спарювання за кодом ще потрібні UDP-порт "
+        "{port} і TCP-порт {pair}.",
+    "Address of the other computer": "Адреса іншого комп'ютера",
+    "Key": "Ключ",
+    "The same on both computers. Pairing by code sets it for you.":
+        "Однаковий на обох комп'ютерах. Спарювання за кодом задає його саме.",
+    "Generate": "Згенерувати",
+    "Replace the key? The other computer will need the new one before Flow works again.":
+        "Замінити ключ? Flow запрацює знову, лише коли інший комп'ютер отримає новий.",
+
+    "Firmware": "Прошивка",
+    "Check for updates": "Перевірити оновлення",
+    "Install fwupd, the system's firmware updater, to see the firmware versions and check for updates.":
+        "Встановіть fwupd, системний засіб оновлення прошивок, щоб бачити версії прошивки й перевіряти оновлення.",
+    "Asking fwupd…": "Запитую fwupd…",
+    "fwupd, the system's firmware updater, does not see the mouse right now.":
+        "fwupd, системний засіб оновлення прошивок, зараз не бачить мишу.",
+    "{name}: version {version} is available. Install it with the command below, and keep the "
+    "mouse switched on and in range until it has finished.":
+        "{name}: доступна версія {version}. Встановіть її командою нижче і тримайте мишу ввімкненою та поруч, "
+        "доки оновлення не завершиться.",
+    "No newer firmware has been published for Linux for these devices.":
+        "Новішої прошивки для цих пристроїв під Linux не опубліковано.",
+    "Updates are installed by fwupd, the system's firmware updater, from the firmware Logitech "
+    "publishes for Linux. MX Options does not flash anything itself.":
+        "Оновлення встановлює fwupd, системний засіб оновлення прошивок, із прошивок, які Logitech публікує "
+        "для Linux. Сама MX Options нічого не прошиває.",
 
     # integrations
     "Integrations": "Інтеграції",

@@ -73,6 +73,11 @@ def service_installed():
     return _systemctl("cat", SERVICE)[0] == 0
 
 
+def start_service():
+    """Start the installed service (it is left alone if it is already running). True if that worked."""
+    return service_installed() and _systemctl("start", SERVICE)[0] == 0
+
+
 def autostart_enabled():
     if service_installed():
         return _systemctl("is-enabled", SERVICE)[1] == "enabled"

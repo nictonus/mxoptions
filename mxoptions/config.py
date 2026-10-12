@@ -5,7 +5,7 @@ import json
 import logging
 import os
 
-from . import APP_ID, device, gestures
+from . import APP_ID, device, flow, gestures
 from .actions import DEFAULT, PRESET_BY_ID, SCROLLS
 
 log = logging.getLogger(__name__)
@@ -231,6 +231,23 @@ DEFAULTS = {
     },
     "app": {"language": "auto", "theme": "graphite", "accent": "#2fd6a7", "model": "photo", "mouse_color": "graphite",
             "api": True},  # let other programs talk to the app over D-Bus
+    # One mouse on two computers, see flow.py
+    "flow": {
+        "enabled": False,
+        "peer": "",           # the other computer's address (name or IP, ":port" allowed); one of the two may leave it empty
+        "key": "",            # pairing key, the same on both computers
+        "port": flow.PORT,    # where this computer listens for the other one
+        "edge": "right",      # the edge of this desktop the other computer is behind: left | right | top | bottom
+        "edge_at": 0.0,       # when that was chosen (Unix time): of the two computers, the later choice decides
+        "push_mm": 10.0,      # how far the mouse has to be pushed on, once the pointer is at the edge, to cross
+        "corner": 10,         # percent of the edge at each of its ends where pushing does nothing (hot corners live there)
+        "fullscreen": False,  # cross even while a full-screen window (a game, a film) is in front
+        "clipboard": True,    # hand the copied text or picture over with the pointer
+        "files": True,        # ... and copied files and folders
+        "files_max_mb": 2048,  # at most this much in one go, sending or receiving
+        "peer_name": "",      # what the other computer calls itself, noted when pairing and whenever it connects
+        "channel": -1,        # this computer's Easy-Switch channel, noted whenever the mouse is here (-1: not seen yet)
+    },
 }
 
 
@@ -361,6 +378,19 @@ def _sanitize(cfg):
     for key in ("free", "ratchet"):
         click[key] = _waveform(click.get(key, default_click[key]), default_click[key])
     _clamp(cfg, "wheel_click", "volume", 0.0, 1.0, float)
+    link = cfg["flow"]
+    for key in ("enabled", "clipboard", "files", "fullscreen"):
+        link[key] = bool(link.get(key))
+    for key in ("peer", "key", "peer_name"):
+        link[key] = link[key].strip()[:200] if isinstance(link.get(key), str) else ""
+    _clamp(cfg, "flow", "push_mm", 0.0, 60.0, float)
+    _clamp(cfg, "flow", "corner", 0, 40)
+    _clamp(cfg, "flow", "files_max_mb", 1, 65536)
+    if link.get("edge") not in flow.EDGES:
+        link["edge"] = DEFAULTS["flow"]["edge"]
+    _clamp(cfg, "flow", "port", 1024, 65535)
+    _clamp(cfg, "flow", "edge_at", 0.0, 4.0e9, float)
+    _clamp(cfg, "flow", "channel", -1, 15)
     for key in ("dpi", "alt_dpi", "precision_dpi"):
         _clamp(cfg, "pointer", key, 100, 32000)
     _clamp(cfg, "wheel", "threshold", 1, 50)
@@ -430,7 +460,9 @@ def load():
 def save(cfg):
     os.makedirs(CONFIG_DIR, exist_ok=True)
     tmp = CONFIG_PATH + ".tmp"
-    with open(tmp, "w") as f:
+    # Readable by the user alone: the file holds the pairing key of Flow.
+    with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+        os.fchmod(f.fileno(), 0o600)  # a file left over from an earlier attempt keeps its old mode otherwise
         json.dump(cfg, f, indent=2, ensure_ascii=False)
     os.replace(tmp, CONFIG_PATH)
 

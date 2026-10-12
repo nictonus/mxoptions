@@ -22,7 +22,8 @@ PATH = "/org/mxoptions/Mouse"
 INTERFACE = "org.mxoptions.Mouse1"
 API_VERSION = 1
 # Actions another program may run through Trigger(); the rest only make sense on a physical button.
-TRIGGERABLE = ("none", "keys", "button", "shortcut", "command", "script", "macro", "wheel_mode", "dpi_cycle", "host", "hook")
+TRIGGERABLE = ("none", "keys", "button", "shortcut", "command", "script", "macro", "wheel_mode", "dpi_cycle", "host", "flow",
+               "hook")
 CHARGING = (device.BATTERY_CHARGING, device.BATTERY_ALMOST_FULL, device.BATTERY_SLOW_CHARGE, device.BATTERY_FULL)
 
 

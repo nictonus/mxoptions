@@ -25,7 +25,7 @@ from PySide6.QtWidgets import QApplication, QScrollArea  # noqa: E402
 
 from mxoptions import config, i18n  # noqa: E402
 
-PAGES = ("buttons", "gestures", "scroll", "haptics", "ring", "device")  # in the order of the sidebar
+PAGES = ("buttons", "gestures", "scroll", "haptics", "ring", "flow", "device")  # in the order of the sidebar
 STATE = {
     "connected": True, "known": True, "name": "MX Master 4", "uinput": True, "battery": (82, 0), "current_host": 0,
     "wheel_mode": "ratchet", "dpi": 1000,

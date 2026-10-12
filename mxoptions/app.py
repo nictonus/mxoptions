@@ -6,6 +6,7 @@ import logging
 import os
 import signal
 import sys
+import time
 
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtGui import QIcon
@@ -108,8 +109,17 @@ def main(argv=None):
     app.setQuitOnLastWindowClosed(False)
     if _notify_running_instance(show=not args.background):
         return 0
+    if not args.background and os.environ.get("MXOPTIONS_LAUNCHER") and desktop.start_service():
+        # An installed copy opened from the menu while its service was stopped: let the service be the
+        # one copy that runs (so it is looked after like any service) and ask it for the window.
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            if _notify_running_instance(show=True):
+                return 0
+            time.sleep(0.2)
+        log.warning("the service did not come up; running without it")
 
-    from . import api
+    from . import api, flow_files, flow_service
     from .ui import editors, ring, theme
     from .ui.main_window import MainWindow
     from .ui.ring import RingOverlay
@@ -131,6 +141,7 @@ def main(argv=None):
     sounds = WheelSounds(app)
     sounds.configure(cfg["wheel_click"])
     store = Store(cfg, engine, sounds)
+    store.flow = flow_service.FlowService(store, app)
     bridge.state.connect(store.update_state)
     bridge.seeded.connect(lambda seeded: store.replace(seeded, push=False))
     bridge.pressed.connect(store.pressed_changed)
@@ -160,6 +171,8 @@ def main(argv=None):
             mode, quiet = payload
             if not quiet and store.cfg["wheel_click"]["mode"] in ("sound", "both"):
                 sounds.play(mode)
+        elif kind == "flow":
+            store.flow.on_engine(payload)
         service.api.on_event(kind, payload)
 
     store.changed.connect(config_changed)
@@ -200,6 +213,28 @@ def main(argv=None):
         if reason == QSystemTrayIcon.ActivationReason.Trigger else None
     )
     store.state_changed.connect(lambda state: tray.setToolTip(_tray_tooltip(state)))
+
+    def flow_note(kind, details):
+        name = details.get("name") or _("the other computer")
+        if kind == "coming":
+            text = _("{count} file(s), {size}, are coming over from {name}. They can be pasted here once they have arrived; "
+                     "the Flow page shows how far they are.").format(
+                         count=details["count"], size=flow_files.human(details["total"]), name=name)
+        elif kind == "files":
+            text = _("Copied on {name}: {count} file(s) are on the clipboard here. Paste them where you want them.").format(
+                name=name, count=details["count"])
+        elif details.get("why") == "too big":
+            text = _("The files copied on {name} are larger than the {limit} MB set for Flow, so they were not brought over.").format(
+                name=name, limit=details["limit"])
+        elif details.get("why") == "too many":
+            text = _("Too many files were copied on {name} to bring them over.").format(name=name)
+        elif details.get("why") == "no space":
+            text = _("There is not enough room on this disk for the files copied on {name}.").format(name=name)
+        else:
+            text = _("The files copied on {name} could not be brought over.").format(name=name)
+        tray.showMessage("Flow", text, icon, 8000)
+
+    store.flow.notify = flow_note
     tray_wait = QTimer(app)  # at login the service may be up before the panel that hosts the tray
     tray_wait.setInterval(2000)
 
@@ -215,6 +250,7 @@ def main(argv=None):
 
     def shutdown():
         overlay.close()
+        store.flow.close()
         store.flush()
         engine.stop()
 
@@ -228,4 +264,8 @@ def main(argv=None):
     engine.start()
     if not args.background:
         window.show()
-    return app.exec()
+    status = app.exec()
+    for _moment in range(10):  # the clipboard service may still be reading: it must finish before Qt is taken down
+        app.processEvents()
+        time.sleep(0.02)
+    return status

@@ -1,19 +1,23 @@
 """The pages of the main window."""
 
-from PySide6.QtCore import Qt, QTimer
+import threading
+
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QApplication, QColorDialog, QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea,
     QVBoxLayout, QWidget,
 )
 
-from .. import APP_NAME, __version__, actions, api, config, desktop, device
+from .. import APP_NAME, __version__, actions, api, config, desktop, device, firmware
 from ..i18n import _
 from .action_picker import ActionPicker
 from . import mouse_photo
 from .mouse_view import MouseView
 from . import theme
-from .widgets import Card, ElidedLabel, PatternRow, Row, Segmented, SliderRow, SwatchRow, Switch, hint_label
+from .widgets import (
+    Card, ElidedLabel, InfoButton, PatternRow, Row, Segmented, SliderRow, SwatchRow, Switch, hint_label, titled,
+)
 
 BUTTON_TITLES = {
     "middle": "Middle button",
@@ -50,18 +54,11 @@ MODEL_LABELS = [("photo", "Photo"), ("studio", "3D"), ("lowpoly", "Low-poly"), (
 COLOR_LABELS = [("graphite", "Graphite"), ("pale-grey", "Pale grey"), ("black", "Black")]
 
 
-def _header(title, subtitle=None):
-    box = QVBoxLayout()
-    box.setSpacing(4)
+def _header(title, about=None):
+    """The title of a page, with what the page is for behind an info button."""
     label = QLabel(title)
     label.setObjectName("pageTitle")
-    box.addWidget(label)
-    if subtitle:
-        sub = QLabel(subtitle)
-        sub.setObjectName("pageSubtitle")
-        sub.setWordWrap(True)
-        box.addWidget(sub)
-    return box
+    return titled(label, InfoButton(about))
 
 
 class ScrollPage(QWidget):
@@ -507,16 +504,37 @@ class HapticsPage(ScrollPage):
         self._refresh()
 
 
+class FirmwareQuery(QObject):
+    """Asks fwupd about the mouse off the GUI thread; ``answered`` carries (entries, was it a check for updates)."""
+
+    answered = Signal(object, bool)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.running = False
+
+    def start(self, name, check):
+        if self.running:
+            return
+        self.running = True
+
+        def job():
+            entries = firmware.check(name) if check else firmware.installed(name)
+            self.running = False
+            self.answered.emit(entries, check)
+
+        threading.Thread(target=job, name="firmware", daemon=True).start()
+
+
 class DevicePage(ScrollPage):
     def __init__(self, store, parent=None):
         super().__init__(_("Device & app"), None, parent)
         self.store = store
 
-        card = Card(_("Easy-Switch"))
-        self.hosts_hint = card.add_plain(hint_label(_(
+        card = Card(_("Easy-Switch"), hint=_(
             "Move the mouse to another paired computer. It disconnects from this one until you switch back "
             "with the button on its underside."
-        )))
+        ))
         self.hosts = QWidget()
         self.hosts_layout = QHBoxLayout(self.hosts)
         self.hosts_layout.setContentsMargins(0, 0, 0, 0)
@@ -524,6 +542,31 @@ class DevicePage(ScrollPage):
         card.add_plain(self.hosts)
         self.hosts_card = card
         self._hosts_shown = None
+        self.body.addWidget(card)
+
+        # firmware: read and updated through fwupd, never flashed by this program
+        card = Card(_("Firmware"))
+        self.firmware_check = QPushButton(_("Check for updates"))
+        self.firmware_check.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.firmware_check.clicked.connect(lambda: self._ask_firmware(check=True))
+        self.firmware_row = card.add(Row(_("Firmware"), None, self.firmware_check, note=" "))
+        command = QWidget()
+        command_layout = QHBoxLayout(command)
+        command_layout.setContentsMargins(0, 0, 0, 0)
+        command_layout.setSpacing(10)
+        self.firmware_command = ElidedLabel(mode=Qt.TextElideMode.ElideMiddle)
+        self.firmware_command.setObjectName("summary")
+        self.firmware_command.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        command_layout.addWidget(self.firmware_command, 1)
+        copy_command = QPushButton(_("Copy"))
+        copy_command.setCursor(Qt.CursorShape.PointingHandCursor)
+        copy_command.clicked.connect(lambda: QApplication.clipboard().setText(self.firmware_command.full_text()))
+        command_layout.addWidget(copy_command)
+        self.firmware_command_row = card.add_plain(command)
+        self.firmware_card = card
+        self.firmware = FirmwareQuery(self)
+        self.firmware.answered.connect(self._firmware_answered)
+        self._firmware_entries, self._firmware_checked, self._firmware_for = [], False, None
         self.body.addWidget(card)
 
         card = Card(_("Appearance"))
@@ -610,6 +653,49 @@ class DevicePage(ScrollPage):
         store.state_changed.connect(self._state)
         self._refresh()
 
+    # -- firmware ------------------------------------------------------------
+
+    def _ask_firmware(self, check=False):
+        name = self.store.state.get("name")
+        if firmware.available() and name and self.store.state["connected"]:
+            self._firmware_for = name
+            self.firmware.start(name, check)
+            self._show_firmware()
+
+    def _firmware_answered(self, entries, checked):
+        self._firmware_entries, self._firmware_checked = entries, checked
+        self._show_firmware()
+
+    def _show_firmware(self):
+        row, entries = self.firmware_row, self._firmware_entries
+        offered = next((entry for entry in entries if entry["updates"]), None)
+        self.firmware_check.setEnabled(firmware.available() and self.store.state["connected"] and not self.firmware.running)
+        self.firmware_command_row.setVisible(offered is not None)
+        row.title.setText("   ·   ".join(f"{entry['name']}  {entry['version']}" for entry in entries) or _("Firmware"))
+        if not firmware.available():
+            text = _("Install fwupd, the system's firmware updater, to see the firmware versions and check for updates.")
+        elif self.firmware.running:
+            text = _("Asking fwupd…")
+        elif not entries:
+            text = _("fwupd, the system's firmware updater, does not see the mouse right now.")
+        elif offered is not None:
+            text = _("{name}: version {version} is available. Install it with the command below, and keep the "
+                     "mouse switched on and in range until it has finished.").format(
+                         name=offered["name"], version=offered["updates"][0]["version"])
+            self.firmware_command.setText(firmware.update_command(offered))
+        elif self._firmware_checked:
+            text = _("No newer firmware has been published for Linux for these devices.")
+        else:
+            text = _("Updates are installed by fwupd, the system's firmware updater, from the firmware Logitech "
+                     "publishes for Linux. MX Options does not flash anything itself.")
+        row.note.setText(text)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._firmware_for != self.store.state.get("name"):
+            self._ask_firmware()  # once per mouse: what is installed
+        self._show_firmware()
+
     def _guard(self, setter, switch):
         def apply(enabled):
             try:
@@ -645,6 +731,9 @@ class DevicePage(ScrollPage):
 
     def _state(self, state):
         self.uinput_warning.setVisible(not state["uinput"])
+        if self.isVisible() and state["connected"] and self._firmware_for != state.get("name"):
+            self._ask_firmware()
+        self._show_firmware()
         hosts = state.get("hosts") or []
         self.hosts_card.setVisible(bool(hosts))
         signature = (state.get("current_host"), tuple((h["paired"], h["name"]) for h in hosts), state["connected"])

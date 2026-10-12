@@ -131,6 +131,7 @@ click elsewhere or 20 seconds without movement.
 | `{"type": "command", "command": "konsole"}` | Shell command. |
 | `{"type": "script", "name": "VPN", "script": "..."}` | Multi-line script (bash unless it starts with `#!`). |
 | `{"type": "wheel_mode"}`, `{"type": "dpi_cycle"}`, `{"type": "host", "host": 1}` | Toggle the wheel mode, switch between the two pointer speeds, Easy-Switch (channels here count from 0). |
+| `{"type": "flow"}` | Send the mouse to the other computer of Flow, clipboard included (catalogue id `flow`). Nothing happens unless Flow is set up and the other computer is reachable. |
 | `{"type": "hook", "name": "..."}` | Emit `Hook` (see above). |
 | `{"type": "none"}` | Do nothing (a button set to this is still reported by `ButtonPressed`). |
 
@@ -152,6 +153,8 @@ Buttons additionally take `{"type": "default"}` (leave it to the mouse), `{"type
 | `buttons.<button>` | The action of `middle`, `back`, `forward`, `gesture`, `smartshift`, `panel`. |
 | `gestures.trigger`, `gestures.min_mm`, `gestures.far_mm`, `gestures.dead`, `gestures.bias` | How swipes are read. |
 | `ring.bubbles`, `ring.style`, `ring.size` | The user's Actions Ring. |
+| `flow.enabled`, `flow.edge`, `flow.push_mm`, `flow.corner`, `flow.fullscreen` | Flow: on/off, the edge that leads to the other computer (`left`, `right`, `top`, `bottom`), millimetres to push past it, percent of the edge kept free at each end, whether to cross under a full-screen window. |
+| `flow.clipboard`, `flow.files`, `flow.files_max_mb` | Flow: whether copied text and pictures go along, whether files do, and the most megabytes in one go. `flow.key` is the pairing key: treat it as a password. |
 
 ## Example: a Python client
 

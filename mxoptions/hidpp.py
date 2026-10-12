@@ -86,6 +86,9 @@ class Transport:
         self._reply = None
         self._reply_ready = threading.Event()
         self._closed = False
+        # A mouse connected directly (Bluetooth, cable) sends its ordinary reports on this node too:
+        # ``on_report(data)`` gets them (see DirectWatcher). A receiver sends those on another node.
+        self.on_report = None
         self._thread = threading.Thread(target=self._read_loop, name=f"hidpp-{os.path.basename(path)}", daemon=True)
         self._thread.start()
 
@@ -138,7 +141,12 @@ class Transport:
                 log.exception("failed to handle packet %s", data.hex(" "))
 
     def _dispatch(self, data):
-        if len(data) < 4 or data[0] not in (REPORT_SHORT, REPORT_LONG):
+        if data[0] not in (REPORT_SHORT, REPORT_LONG):
+            on_report = self.on_report
+            if on_report:
+                on_report(data)
+            return
+        if len(data) < 4:
             return
         devidx, sub_id, address = data[1], data[2], data[3]
         pending = self._pending
@@ -238,14 +246,20 @@ def find_mouse_report_node(hidpp_path):
     return None
 
 
-def wheel_index(mouse_node):
-    """Where the scroll wheel sits in the mouse reports of ``mouse_node``: the index of its byte in a
-    report (counting the report ID), or None. Receivers differ in how wide the X and Y fields are."""
+def read_descriptor(node):
+    """The HID report descriptor of a hidraw node (b"" if it cannot be read)."""
     try:
-        with open(os.path.join("/sys/class/hidraw", os.path.basename(mouse_node), "device", "report_descriptor"), "rb") as f:
-            desc = f.read()
+        with open(os.path.join("/sys/class/hidraw", os.path.basename(node), "device", "report_descriptor"), "rb") as f:
+            return f.read()
     except OSError:
-        return None
+        return b""
+
+
+def mouse_layout(desc):
+    """Where things sit in the mouse reports (report ID 2) a descriptor describes: {"wheel": index of
+    the wheel's byte in a report, counting the report ID, "x" and "y": (first bit after the report
+    ID, number of bits)}, each None if not found. Receivers and Bluetooth differ in how wide X and Y are."""
+    found = {"wheel": None, "x": None, "y": None}
     page = size = count = report = 0
     usages, bits, i = [], {}, 0
     while i < len(desc):
@@ -263,32 +277,101 @@ def wheel_index(mouse_node):
             report = value
         elif tag == 0x08:
             usages.append(value)
-        elif tag == 0x80:  # an input field: is the wheel (Generic Desktop 0x38) one of its items?
+        elif tag == 0x80:  # an input field: which of its items are X, Y and the wheel of Generic Desktop?
             start = bits.get(report, 0)
             for item in range(count):
                 usage = usages[min(item, len(usages) - 1)] if usages else None
                 offset = start + item * size
-                if report == 2 and page == 0x01 and usage == 0x38 and size == 8 and offset % 8 == 0:
-                    return 1 + offset // 8
+                if report != 2 or page != 0x01:
+                    continue
+                if usage == 0x38 and size == 8 and offset % 8 == 0 and found["wheel"] is None:
+                    found["wheel"] = 1 + offset // 8
+                elif usage in (0x30, 0x31) and 8 <= size <= 16:
+                    axis = "x" if usage == 0x30 else "y"
+                    if found[axis] is None:
+                        found[axis] = (offset, size)
             bits[report] = start + count * size
         if tag in (0x80, 0x90, 0xB0, 0xA0, 0xC0):  # main items end the local usage list
             usages = []
         i += 1 + length
-    return None
+    return found
 
 
-class ButtonWatcher:
-    """Reads the receiver's mouse reports and calls ``on_change(watcher, bitmask)`` when a button changes
-    and, if asked, ``on_wheel(watcher, notches, when)`` for every movement of the scroll wheel.
+def wheel_index(mouse_node):
+    """Where the scroll wheel sits in the mouse reports of ``mouse_node``: the index of its byte in a
+    report (counting the report ID), or None."""
+    return mouse_layout(read_descriptor(mouse_node))["wheel"]
 
-    Bit 0 is the left button, then right, middle, back, forward. Reading hidraw only copies
-    the reports; the desktop still receives them."""
 
-    def __init__(self, path, on_change, on_wheel=None):
-        self.path = path
+def _signed(report, field):
+    """The value of a (first bit, number of bits) field of a report, as the signed number it is."""
+    offset, size = field
+    value = (int.from_bytes(report[1:], "little") >> offset) & ((1 << size) - 1)
+    return value - (1 << size) if value >> (size - 1) else value
+
+
+class MouseReports:
+    """Makes sense of the mouse's ordinary reports (report ID 2, which starts with the buttons): calls
+    ``on_change(self, bitmask)`` when a button changes and, if asked, ``on_wheel(self, notches, when)``
+    for every movement of the scroll wheel. Bit 0 is the left button, then right, middle, back, forward.
+    While ``on_motion`` is set, it is called with (self, dx, dy, when) for every movement of the mouse,
+    in its own counts (right and down are positive).
+
+    ``node`` is the hidraw node the reports come from; its descriptor says where things are."""
+
+    def __init__(self, node, on_change, on_wheel=None):
+        layout = mouse_layout(read_descriptor(node))
         self._on_change = on_change
         self._on_wheel = on_wheel
-        self._wheel = wheel_index(path) if on_wheel else None
+        self._wheel = layout["wheel"] if on_wheel else None
+        self._xy = (layout["x"], layout["y"]) if layout["x"] and layout["y"] else None
+        self._buttons = 0
+        self.on_motion = None
+        self.last_input = None  # when the mouse last moved, clicked or scrolled (None until it does)
+
+    @property
+    def tracks_motion(self):
+        return self._xy is not None
+
+    def feed(self, data):
+        if data[0] != 0x02 or len(data) < 3:
+            return
+        self.last_input = time.monotonic()
+        buttons = data[1] | (data[2] << 8)
+        if buttons != self._buttons:
+            self._buttons = buttons
+            self._on_change(self, buttons)
+        if self._wheel is not None and len(data) > self._wheel and data[self._wheel]:
+            notches = data[self._wheel]
+            self._on_wheel(self, notches - 256 if notches > 127 else notches, self.last_input)
+        on_motion = self.on_motion
+        if on_motion is not None and self._xy is not None:
+            dx, dy = _signed(data, self._xy[0]), _signed(data, self._xy[1])
+            if dx or dy:
+                on_motion(self, dx, dy, self.last_input)
+
+
+class DirectWatcher(MouseReports):
+    """The reports of a mouse connected over Bluetooth or a cable, taken from the transport that
+    already reads its node."""
+
+    def __init__(self, transport, on_change, on_wheel=None):
+        super().__init__(transport.path, on_change, on_wheel)
+        self._transport = transport
+        transport.on_report = self.feed
+
+    def close(self):
+        if self._transport.on_report == self.feed:
+            self._transport.on_report = None
+
+
+class ButtonWatcher(MouseReports):
+    """The reports of a mouse on a receiver, read from the receiver's mouse node. Reading hidraw
+    only copies the reports; the desktop still receives them."""
+
+    def __init__(self, path, on_change, on_wheel=None):
+        super().__init__(path, on_change, on_wheel)
+        self.path = path
         self._fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
         self._wake_r, self._wake_w = os.pipe()
         self._closed = False
@@ -311,7 +394,6 @@ class ButtonWatcher:
                 pass
 
     def _loop(self):
-        state = 0
         while not self._closed:
             try:
                 readable, _, _ = select.select([self._fd, self._wake_r], [], [])
@@ -322,11 +404,4 @@ class ButtonWatcher:
                 return
             if not data:
                 return
-            if data[0] == 0x02 and len(data) >= 3:
-                buttons = data[1] | (data[2] << 8)
-                if buttons != state:
-                    state = buttons
-                    self._on_change(self, buttons)
-                if self._wheel is not None and len(data) > self._wheel and data[self._wheel]:
-                    notches = data[self._wheel]
-                    self._on_wheel(self, notches - 256 if notches > 127 else notches, time.monotonic())
+            self.feed(data)

@@ -38,6 +38,14 @@ SPIN_STOP = 0.13     # s without movement after which a freely spinning wheel co
 SPIN_TRAVEL = 3.0    # notches that must be covered at speed before the wheel counts as let go
 SPIN_SHORT = 0.30    # s: a wheel that stops this soon after letting go gets no second click for being caught
 REPORT_INTERVAL = 0.006  # s: two reports cannot really be closer than this, whatever their arrival times say
+# Flow (flow.py): the mouse moves on to another computer when the pointer is pushed against a screen edge.
+FLOW_MOVED = 0.6     # s: the pointer reaching the edge counts only if this mouse moved that recently
+PUSH_PAUSE = 0.30    # s without pushing after which the push against the edge starts over
+PUSH_DWELL = 0.25    # where the mouse's movement cannot be followed, the pointer has to rest against the edge
+PUSH_DWELL_PER_MM = 0.03  # ... this long, plus this much for every millimetre of push asked for
+EDGE_AXES = {"left": (-1, 0), "right": (1, 0), "top": (0, -1), "bottom": (0, 1)}  # in the mouse's counts, down is positive
+EXPECT_FOR = 12.0    # s the mouse is looked for more often after the other computer sent it here
+EXPECT_INTERVAL = 0.4
 HID_BUTTONS = ("left", "right", "middle", "back", "forward")  # bit order of the receiver's mouse report
 
 # thumb wheel function -> (wheel clicks per step, action forward, action backward)
@@ -71,7 +79,9 @@ class Listener:
 
     def on_event(self, kind, payload):
         """Something other programs may want to hear about (it is passed on over D-Bus):
-        "button" (key, pressed), "gesture" direction, "wheel_mode" (mode, quiet), "hook" (name, phase)."""
+        "button" (key, pressed), "gesture" direction, "wheel_mode" (mode, quiet), "hook" (name, phase).
+        And for Flow: "flow" ("asked", None) when an action asks to move to the other computer,
+        ("left", channel) once the mouse was sent there, ("refused", why) when it was not."""
 
     def on_gesture(self, event):
         """A gesture in progress or just finished, while the settings window is watching. ``event`` has
@@ -118,9 +128,11 @@ class Engine:
         self._wheel_fraction = 0.0
         self._thumb = {"acc": 0.0, "last": 0.0, "fraction": 0.0}
         self._monitor = False      # the settings window is open and wants to see button presses
-        self._watcher = None       # ButtonWatcher for the buttons the firmware handles itself
+        self._watcher = None       # follows the mouse's ordinary reports (hidpp.MouseReports)
         self._hid_buttons = 0
         self._reported = frozenset()
+        self._expect_until = 0.0   # the other computer is sending the mouse over: look for it more often
+        self._push = None          # Flow: the pointer rests against the edge that leads to the other computer
 
     # -- thread-safe API --------------------------------------------------
 
@@ -175,6 +187,25 @@ class Engine:
         """Recognise gestures without running their actions (the gestures page is being tried out)."""
         self._queue.put(("practice", bool(enabled)))
 
+    def flow_leave(self, channel, by_edge):
+        """Flow: send the mouse to the computer on Easy-Switch ``channel``, unless a button is held or,
+        when the pointer reaching a screen edge is the reason (``by_edge``), something else moved it there.
+        The outcome comes back as a "flow" event."""
+        self._queue.put(("flow", int(channel), bool(by_edge)))
+
+    def flow_arm(self, channel, edge, push_mm):
+        """Flow: the pointer has come to rest against ``edge``, behind which the computer on Easy-Switch
+        ``channel`` is. Send the mouse there once it has been pushed ``push_mm`` millimetres further."""
+        self._queue.put(("flow_arm", (int(channel), edge, float(push_mm))))
+
+    def flow_disarm(self):
+        """Flow: the pointer has left the edge again."""
+        self._queue.put(("flow_arm", None))
+
+    def expect_mouse(self):
+        """Flow: the other computer is sending the mouse here, so look for it more often for a while."""
+        self._queue.put(("expect",))
+
     # -- worker loop ------------------------------------------------------
 
     def _run(self):
@@ -206,6 +237,8 @@ class Engine:
             return max(0.05, self._next_ping - now)
         if self._spin["free"]:  # wake up in time to notice the wheel stopping
             return max(0.005, self._spin["last"] + SPIN_STOP - now)
+        if self._push is not None and self._push["deadline"] is not None:
+            return max(0.005, self._push["deadline"] - now)
         return max(0.05, min(30.0, self._next_battery - now))
 
     def _handle(self, item):
@@ -241,6 +274,16 @@ class Engine:
             self._device_action({"type": "wheel_mode", "mode": item[1]}, "trigger")
         elif kind == "practice":
             self._gesture_dry = item[1]
+        elif kind == "flow":
+            self._flow_leave(item[1], item[2])
+        elif kind == "flow_arm":
+            self._flow_arm(item[1])
+        elif kind == "hid_motion":
+            if item[1] is self._watcher:
+                self._on_push(item[2], item[3], item[4])
+        elif kind == "expect":
+            self._expect_until = time.monotonic() + EXPECT_FOR
+            self._next_scan = self._next_ping = 0.0
         elif kind == "hid_wheel":
             if item[1] is self._watcher and not self._wheel_diverted():
                 self._on_spin(item[2], item[3])
@@ -254,14 +297,15 @@ class Engine:
 
     def _tick(self):
         now = time.monotonic()
+        expected = now < self._expect_until
         if self.mouse is None:
             if now >= self._next_scan:
-                self._next_scan = now + SCAN_INTERVAL
+                self._next_scan = now + (EXPECT_INTERVAL if expected else SCAN_INTERVAL)
                 self._scan()
             return
         if not self.online or self._dirty:
             if now >= self._next_ping:
-                self._next_ping = now + OFFLINE_PING_INTERVAL
+                self._next_ping = now + (EXPECT_INTERVAL if expected else OFFLINE_PING_INTERVAL)
                 if self.mouse.transport.ping(self.mouse.devidx, timeout=1.2, retries=1):
                     self._configure()
             return
@@ -273,6 +317,10 @@ class Engine:
             brief = (self._spin["last"] - self._spin["since"] < SPIN_SHORT
                      and self.cfg["wheel_click"]["moments"] == "both")
             self._wheel_changed("ratchet", "it stopped at once" if brief else "it stopped", quiet=brief)
+        push = self._push
+        if push is not None and push["deadline"] is not None and now >= push["deadline"]:
+            self._flow_arm(None)
+            self._flow_leave(push["channel"], True)
         if now >= self._next_battery:
             self._next_battery = now + BATTERY_INTERVAL
             self._read_status(hosts=False)
@@ -331,19 +379,24 @@ class Engine:
                     and (self.cfg["wheel_click"]["mode"] != "off" or self.cfg["app"]["api"]))
 
     def _sync_watcher(self):
-        """Run the plain-report watcher only while it is needed (the window shows presses, or the
-        wheel's speed is being followed) and the mouse is there."""
-        wanted = ((self._monitor or self._spin_wanted()) and self.mouse is not None and self.online
-                  and self.mouse.transport.is_receiver)
+        """Follow the mouse's ordinary reports only while that is needed (the window shows presses, the
+        wheel's speed is being followed, or Flow has to know that the mouse is moving with no button
+        held) and the mouse is there."""
+        wanted = ((self._monitor or self._spin_wanted() or self.cfg["flow"]["enabled"]) and self.mouse is not None
+                  and self.online)
         if wanted and self._watcher is None:
-            path = hidpp.find_mouse_report_node(self.mouse.transport.path)
-            if path:
-                try:
-                    self._watcher = hidpp.ButtonWatcher(
-                        path, lambda watcher, bits: self._queue.put(("hid_buttons", watcher, bits)),
-                        lambda watcher, notches, when: self._queue.put(("hid_wheel", watcher, notches, when)))
-                except OSError as e:
-                    log.debug("cannot watch %s: %s", path, e)
+            transport = self.mouse.transport
+            heard = (lambda watcher, bits: self._queue.put(("hid_buttons", watcher, bits)),
+                     lambda watcher, notches, when: self._queue.put(("hid_wheel", watcher, notches, when)))
+            if transport.is_receiver:  # the receiver sends them on a node of their own
+                path = hidpp.find_mouse_report_node(transport.path)
+                if path:
+                    try:
+                        self._watcher = hidpp.ButtonWatcher(path, *heard)
+                    except OSError as e:
+                        log.debug("cannot watch %s: %s", path, e)
+            else:  # Bluetooth or a cable: they arrive where the HID++ traffic does
+                self._watcher = hidpp.DirectWatcher(transport, *heard)
         elif not wanted and self._watcher is not None:
             watcher, self._watcher = self._watcher, None
             watcher.close()
@@ -370,6 +423,7 @@ class Engine:
         self._spin["free"] = False
         self._spin["events"].clear()
         self._dpi_shift = False
+        self._flow_arm(None)
         if self._ring_cid is not None:
             self._ring_cid = None
             self.listener.on_ring("cancel")
@@ -619,6 +673,8 @@ class Engine:
                 self._apply_pointer()
             elif kind == "host" and phase != "release":
                 self._switch_host(action.get("host", 0))
+            elif kind == "flow" and phase != "release":
+                self._emit("flow", ("asked", None))  # the Flow service knows where the other computer is
         except HidppClosed:
             raise
         except HidppError as e:
@@ -632,6 +688,68 @@ class Engine:
             mouse.change_host(host)
         except HidppError as e:
             log.warning("host switch failed: %s", e)
+
+    def _moved_lately(self):
+        """Whether the mouse itself was in use a moment ago; True as well where that cannot be known."""
+        seen = self._watcher.last_input if self._watcher is not None else None
+        return seen is None or time.monotonic() - seen < FLOW_MOVED
+
+    def _flow_arm(self, armed):
+        """Start (``armed`` = (channel, edge, push in mm)) or stop measuring the push against the edge."""
+        if self._watcher is not None:
+            self._watcher.on_motion = None
+        self._push = None
+        if armed is None or not self.mouse or not self.online:
+            return
+        channel, edge, push_mm = armed
+        if push_mm <= 0 or edge not in EDGE_AXES:
+            self._flow_leave(channel, True)  # no resistance asked for: touching the edge is enough
+            return
+        self._push = {"channel": channel, "axes": EDGE_AXES[edge], "need": push_mm * self._counts_per_mm(), "got": 0.0,
+                      "last": 0.0, "deadline": None}
+        if self._watcher is not None and self._watcher.tracks_motion:
+            self._watcher.on_motion = lambda watcher, dx, dy, when: self._queue.put(("hid_motion", watcher, dx, dy, when))
+        else:  # the hand cannot be followed here: resting against the edge for a while has to do
+            self._push["deadline"] = time.monotonic() + PUSH_DWELL + push_mm * PUSH_DWELL_PER_MM
+
+    def _on_push(self, dx, dy, when):
+        """The mouse moved while the pointer rests against the edge: add up how far it was pushed on."""
+        push = self._push
+        if push is None:
+            return
+        if when - push["last"] > PUSH_PAUSE:
+            push["got"] = 0.0  # it stopped in between: one continuous push is what counts
+        push["last"] = when
+        push["got"] = max(0.0, push["got"] + dx * push["axes"][0] + dy * push["axes"][1])
+        if push["got"] >= push["need"]:
+            self._flow_arm(None)
+            self._flow_leave(push["channel"], True)
+
+    def _flow_leave(self, channel, by_edge):
+        mouse = self.mouse
+        if not mouse or not self.online:
+            why = "away"
+        elif not 0 <= channel < mouse.host_count or channel == self._hosts[0]:
+            why = "channel"
+        elif self._pressed or self._hid_buttons:
+            why = "held"   # in the middle of a drag: the button would stay down here for good
+        elif by_edge and not self._moved_lately():
+            why = "idle"   # a touchpad or another mouse pushed the pointer there
+        else:
+            why = None
+            try:
+                mouse.change_host(channel)
+            except HidppClosed:
+                raise
+            except HidppError as e:
+                log.warning("flow: host switch failed: %s", e)
+                why = "failed"
+        if why:
+            log.info("flow: the mouse stays (%s)", why)
+            self._emit("flow", ("refused", why))
+        else:
+            log.info("flow: sent the mouse to channel %d", channel + 1)
+            self._emit("flow", ("left", channel))
 
     # -- notifications ----------------------------------------------------
 

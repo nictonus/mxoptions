@@ -1,10 +1,10 @@
-"""Small reusable widgets: switch, cards, setting rows, sliders, segmented control."""
+"""Small reusable widgets: switch, cards, setting rows, sliders, segmented control, info notes."""
 
-from PySide6.QtCore import Property, QEasingCurve, QPointF, QPropertyAnimation, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import Property, QEasingCurve, QPoint, QPointF, QPropertyAnimation, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFontMetricsF, QPainter, QPen
 from PySide6.QtWidgets import (
-    QAbstractButton, QApplication, QButtonGroup, QComboBox, QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QSlider,
-    QVBoxLayout, QWidget,
+    QAbstractButton, QApplication, QButtonGroup, QComboBox, QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel,
+    QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget,
 )
 
 from .. import device
@@ -76,21 +76,153 @@ class Switch(QAbstractButton):
         painter.drawEllipse(QRectF(x, rect.top() + 3, diameter, diameter))
 
 
-class Card(QFrame):
-    """Rounded panel with an optional title; rows are separated by hairlines."""
+class InfoBubble(QFrame):
+    """The note of an InfoButton: a small card laid over the window, next to the button.
 
-    def __init__(self, title=None, parent=None):
+    It is a child of the window rather than a window of its own, so it needs nothing from the
+    compositor and can have round corners and a shadow."""
+
+    MARGIN = 12  # kept free between the note and the edge of the window
+
+    def __init__(self, window):
+        super().__init__(window)
+        self.setObjectName("infoBubble")
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 10, 14, 11)
+        self.label = QLabel()
+        self.label.setObjectName("infoText")
+        self.label.setWordWrap(True)
+        layout.addWidget(self.label)
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(28)
+        shadow.setOffset(0, 6)
+        shadow.setColor(QColor(0, 0, 0, 120))
+        self.setGraphicsEffect(shadow)
+        self.owner = None
+        self.hide()
+
+    @classmethod
+    def of(cls, window):
+        """The one note a window has (made when first needed)."""
+        bubble = window.findChild(cls, options=Qt.FindChildOption.FindDirectChildrenOnly)
+        return bubble or cls(window)
+
+    def show_for(self, button, text):
+        window = self.parentWidget()
+        self.owner = button
+        self.label.setText(text)
+        width = min(int(340 * ui_scale()), window.width() - 2 * self.MARGIN)
+        self.setFixedWidth(width)
+        self.setFixedHeight(self.layout().heightForWidth(width))
+        below = button.mapTo(window, QPoint(0, button.height() + 6))
+        x = max(self.MARGIN, min(window.width() - width - self.MARGIN, below.x() - 14))
+        y = below.y()
+        if y + self.height() > window.height() - self.MARGIN:  # no room underneath: go above
+            y = button.mapTo(window, QPoint(0, 0)).y() - self.height() - 6
+        self.move(x, max(self.MARGIN, y))
+        self.raise_()
+        self.show()
+
+    def hide_for(self, button):
+        if self.owner is button:
+            self.owner = None
+            self.hide()
+
+
+class InfoButton(QAbstractButton):
+    """A small "i" in a circle. Pointing at it, or clicking it, shows a note about the thing it sits next to.
+
+    Without a note it takes no room at all."""
+
+    def __init__(self, text="", parent=None):
+        super().__init__(parent)
+        self.setFixedSize(18, 18)
+        self.setCursor(Qt.CursorShape.WhatsThisCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._text = ""
+        self._inside = False
+        self.clicked.connect(self._toggle)
+        self.set_text(text)
+
+    def text(self):
+        return self._text
+
+    def set_text(self, text):
+        self._text = text or ""
+        self.setAccessibleDescription(self._text)
+        self.setVisible(bool(self._text))
+        if self._inside and self._text:
+            InfoBubble.of(self.window()).show_for(self, self._text)
+
+    def _toggle(self):
+        bubble = InfoBubble.of(self.window())
+        if bubble.owner is self and bubble.isVisible():
+            bubble.hide_for(self)
+        else:
+            bubble.show_for(self, self._text)
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self._inside = True
+        InfoBubble.of(self.window()).show_for(self, self._text)
+        self.update()
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        self._inside = False
+        InfoBubble.of(self.window()).hide_for(self)
+        self.update()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        if self.window() is not self:
+            InfoBubble.of(self.window()).hide_for(self)
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        color = QColor(theme.ACCENT_INK if self._inside else theme.MUTED)
+        if not self.isEnabled():
+            color = QColor(theme.DISABLED)
+        centre = QPointF(self.width() / 2.0, self.height() / 2.0)
+        painter.setPen(QPen(color, 1.3))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(centre, 7.0, 7.0)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(color)
+        painter.drawEllipse(QPointF(centre.x(), centre.y() - 3.4), 1.0, 1.0)             # the dot
+        painter.drawRoundedRect(QRectF(centre.x() - 0.8, centre.y() - 1.4, 1.6, 5.2), 0.8, 0.8)  # the stem
+
+
+def titled(label, info):
+    """A caption with its info button right after it, as one line."""
+    line = QHBoxLayout()
+    line.setContentsMargins(0, 0, 0, 0)
+    line.setSpacing(7)
+    line.addWidget(label)
+    line.addWidget(info, 0, Qt.AlignmentFlag.AlignVCenter)
+    line.addStretch(1)
+    return line
+
+
+class Card(QFrame):
+    """Rounded panel with an optional title; rows are separated by hairlines. ``hint`` explains the
+    whole card from an info button next to the title."""
+
+    def __init__(self, title=None, hint=None, parent=None):
         super().__init__(parent)
         self.setObjectName("card")
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(20, 16, 20, 16)
         self._layout.setSpacing(12)
-        self._rows = 0
+        self._rows = []        # in the order they were added
         self._separators = {}  # row -> the hairline above it
         if title:
             label = QLabel(title)
             label.setObjectName("cardTitle")
-            self._layout.addWidget(label)
+            self.info = InfoButton(hint)
+            self._layout.addLayout(titled(label, self.info))
 
     def add(self, widget):
         if self._rows:
@@ -99,14 +231,19 @@ class Card(QFrame):
             self._layout.addWidget(line)
             self._separators[widget] = line
         self._layout.addWidget(widget)
-        self._rows += 1
+        self._rows.append(widget)
         return widget
 
     def set_row_visible(self, widget, visible):
-        """Show or hide a row added with add(), together with the hairline above it."""
+        """Show or hide a row added with add(), together with the hairline above it. The first row
+        that is showing never has one."""
         widget.setVisible(visible)
-        if widget in self._separators:
-            self._separators[widget].setVisible(visible)
+        first = True
+        for row in self._rows:
+            shown = not row.isHidden()
+            if row in self._separators:
+                self._separators[row].setVisible(shown and not first)
+            first = first and not shown
 
     def add_plain(self, widget):
         self._layout.addWidget(widget)
@@ -114,9 +251,10 @@ class Card(QFrame):
 
 
 class Row(QWidget):
-    """Title and hint on the left, a control on the right."""
+    """A title on the left, a control on the right. ``hint`` explains the setting from an info button
+    next to the title; ``note`` is a line of its own under the title, for a status that has to be seen."""
 
-    def __init__(self, title, hint=None, control=None, parent=None):
+    def __init__(self, title, hint=None, control=None, note=None, parent=None):
         super().__init__(parent)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 2, 0, 2)
@@ -125,17 +263,21 @@ class Row(QWidget):
         text.setSpacing(2)
         self.title = QLabel(title)
         self.title.setObjectName("rowTitle")
-        text.addWidget(self.title)
-        self.hint = None
-        if hint:
-            self.hint = QLabel(hint)
-            self.hint.setObjectName("rowHint")
-            self.hint.setWordWrap(True)
-            text.addWidget(self.hint)
+        self.info = InfoButton(hint)
+        text.addLayout(titled(self.title, self.info))
+        self.note = None
+        if note is not None:
+            self.note = QLabel(note)
+            self.note.setObjectName("rowHint")
+            self.note.setWordWrap(True)
+            text.addWidget(self.note)
         layout.addLayout(text, 1)
         self.control = control
         if control is not None:
             layout.addWidget(control, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+    def set_hint(self, text):
+        self.info.set_text(text)
 
 
 class SliderRow(QWidget):
@@ -152,20 +294,14 @@ class SliderRow(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 2, 0, 2)
         layout.setSpacing(6)
-        head = QHBoxLayout()
         self.title = QLabel(title)
         self.title.setObjectName("rowTitle")
-        head.addWidget(self.title)
-        head.addStretch(1)
+        self.info = InfoButton(hint)
+        head = titled(self.title, self.info)
         self.value_label = QLabel()
         self.value_label.setObjectName("valueLabel")
         head.addWidget(self.value_label)
         layout.addLayout(head)
-        if hint:
-            hint_label = QLabel(hint)
-            hint_label.setObjectName("rowHint")
-            hint_label.setWordWrap(True)
-            layout.addWidget(hint_label)
         slider_line = QHBoxLayout()
         slider_line.setSpacing(10)
         if low_label:

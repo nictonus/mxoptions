@@ -13,7 +13,7 @@ from ..i18n import _
 from . import ring
 from .editors import MacroDialog, ScriptDialog
 from .recorder import ShortcutRecorder
-from .widgets import ElidedButton, ElidedLabel, ui_scale
+from .widgets import ElidedButton, ElidedLabel, InfoButton, titled, ui_scale
 
 GESTURE_LABELS = {
     "tap": "Tap",
@@ -260,12 +260,10 @@ class ActionPicker(QFrame):
         layout.setSpacing(10)
         self.title = QLabel()
         self.title.setObjectName("pickerTitle")
-        self.title.setWordWrap(True)
-        layout.addWidget(self.title)
-        self.subtitle = QLabel()
-        self.subtitle.setObjectName("hint")
-        self.subtitle.setWordWrap(True)
-        layout.addWidget(self.subtitle)
+        self.about = InfoButton()
+        heading = titled(self.title, self.about)
+        heading.setContentsMargins(0, 0, 16, 0)
+        layout.addLayout(heading)
 
         self.gesture_block = QWidget()
         block = QVBoxLayout(self.gesture_block)
@@ -347,8 +345,7 @@ class ActionPicker(QFrame):
     def edit(self, title, action, subtitle=""):
         self._action = copy.deepcopy(action)
         self.title.setText(title)
-        self.subtitle.setText(subtitle)
-        self.subtitle.setVisible(bool(subtitle))
+        self.about.set_text(subtitle)
         self.stack.setCurrentIndex(0)
         self._refresh()
 

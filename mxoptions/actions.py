@@ -13,6 +13,7 @@ An action is a plain JSON-able dict:
     {"type": "dpi_cycle"}                    toggle between the two pointer speeds
     {"type": "dpi_shift"}                    precision speed while held
     {"type": "host", "host": n}              Easy-Switch to channel n
+    {"type": "flow"}                         move to the other computer of Flow, clipboard included
     {"type": "gestures", "tap": a, "up": a, "down": a, "left": a, "right": a}
     {"type": "ring"}                         open the Actions Ring
     {"type": "hook", "name": "..."}          only announce it on D-Bus: another program decides what happens
@@ -141,6 +142,7 @@ _PRESETS = [
     ("host_1", "easyswitch", "Easy-Switch 1", "computer", {"type": "host", "host": 0}),
     ("host_2", "easyswitch", "Easy-Switch 2", "computer", {"type": "host", "host": 1}),
     ("host_3", "easyswitch", "Easy-Switch 3", "computer", {"type": "host", "host": 2}),
+    ("flow", "easyswitch", "Move to the other computer (Flow)", "transform-move", {"type": "flow"}),
 ]
 
 CATEGORIES = [
@@ -325,7 +327,7 @@ def run_script(script):
     _spawn([path])
 
 
-def _klipper(method, *args):
+def klipper(method, *args):
     """Call KDE's clipboard service; returns the reply value, or None when it is unavailable."""
     try:
         from PySide6.QtDBus import QDBus, QDBusConnection, QDBusMessage
@@ -346,14 +348,14 @@ def insert_text(vinput, text):
     """Put ``text`` at the cursor: paste it through the clipboard, restoring what was there."""
     if not text or vinput is None:
         return
-    previous = _klipper("getClipboardContents")
-    if previous is None or _klipper("setClipboardContents", text) is None:
+    previous = klipper("getClipboardContents")
+    if previous is None or klipper("setClipboardContents", text) is None:
         vinput.type_ascii(text)  # no clipboard service: plain typing, US layout only
         return
     time.sleep(0.07)
     vinput.tap(["KEY_LEFTCTRL", "KEY_V"])
     time.sleep(0.18)
-    _klipper("setClipboardContents", previous)
+    klipper("setClipboardContents", previous)
 
 
 class MacroRunner:
@@ -435,7 +437,7 @@ class Executor:
         elif kind == "button":
             if self.vinput:
                 self.vinput.press([action["button"]])
-        elif kind in ("wheel_mode", "dpi_cycle", "dpi_shift", "host"):
+        elif kind in ("wheel_mode", "dpi_cycle", "dpi_shift", "host", "flow"):
             self.device_action(action, "press")
         elif kind == "hook":
             self.hook(action.get("name", ""), "press")
@@ -473,7 +475,7 @@ class Executor:
         elif kind == "button":
             if self.vinput:
                 self.vinput.tap([action["button"]])
-        elif kind in ("wheel_mode", "dpi_cycle", "host"):
+        elif kind in ("wheel_mode", "dpi_cycle", "host", "flow"):
             self.device_action(action, "trigger")
         elif kind == "hook":
             self.hook(action.get("name", ""), "trigger")
