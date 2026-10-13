@@ -106,10 +106,15 @@ class End:
 
     def __init__(self, name, staging=None):
         self.heard = queue.Queue()
-        self.link = flow.Link(lambda kind, payload: self.heard.put((kind, payload)), staging=staging)
+        self.pairs = queue.Queue()  # which pairing each event was about
+        self.link = flow.Link(self.hear, staging=staging)
         self.link.set_status({"name": name, "channel": 0, "present": False})
         self.port = free_port()
         self.link.start()
+
+    def hear(self, kind, payload, pair=""):
+        self.heard.put((kind, payload))
+        self.pairs.put((kind, pair))
 
     def expect(self, kind, timeout=6.0):
         """The next event of this kind (others before it are dropped)."""
@@ -220,6 +225,18 @@ class Linked(TwoComputers):
             self.desk.link.configure(KEY, taken.getsockname()[1], "")
             self.assertTrue(self.desk.expect("problem"))
 
+    def test_a_stall_is_reported_and_the_link_survives_it(self):
+        for name, value in (("PING_INTERVAL", 0.1), ("QUIET_AFTER", 0.3), ("DEAD_AFTER", 30.0)):
+            self.addCleanup(setattr, flow, name, getattr(flow, name))
+            setattr(flow, name, value)
+        self.connect()
+        self.laptop.link._call(time.sleep, 1.2)  # the laptop answers nothing for a while, as over a network that stalls
+        self.assertIs(self.desk.expect("quiet"), True)
+        self.assertIs(self.desk.expect("quiet"), False)
+        self.assertTrue(self.desk.quiet("down", 0.3))
+        self.desk.link.send({"t": "after"})
+        self.assertEqual(self.laptop.expect("message")["t"], "after")
+
     def test_with_no_address_given_they_find_each_other(self):
         self.desk.link.configure(KEY, self.desk.port, "")
         self.laptop.link.configure(KEY, self.laptop.port, "")
@@ -232,10 +249,70 @@ class Linked(TwoComputers):
         self.assertTrue(self.desk.quiet("up", 1.2))
 
 
+OTHER_KEY = "QRST-UVWX-YZ23-4567"
+
+
+@unittest.skipUnless(flow.supported(), "this Python has no pre-shared keys for TLS")
+class ThreeComputers(TwoComputers):
+    """The desk in the middle, linked with the laptop and with a tower, each pairing with a key of its own."""
+
+    def setUp(self):
+        super().setUp()
+        self.tower = End("tower", os.path.join(self.folder, "at-tower"))
+        self.addCleanup(self.tower.link.stop)
+        self.with_laptop, self.with_tower = flow.pair_id(KEY), flow.pair_id(OTHER_KEY)
+        self.desk.link.configure([{"key": KEY, "address": ""}, {"key": OTHER_KEY, "address": ""}], self.desk.port)
+        self.laptop.link.configure(KEY, self.laptop.port, f"127.0.0.1:{self.desk.port}")
+        self.tower.link.configure(OTHER_KEY, self.tower.port, f"127.0.0.1:{self.desk.port}")
+        self.assertEqual(self.laptop.expect("up")["name"], "desk")
+        self.assertEqual(self.tower.expect("up")["name"], "desk")
+        time.sleep(0.5)
+
+    def test_the_one_in_the_middle_is_linked_with_both_and_knows_which_is_which(self):
+        ups = {}
+        while len(ups) < 2:
+            kind, pair = self.desk.pairs.get(timeout=5)
+            if kind == "up":
+                ups[pair] = True
+        self.assertEqual(set(ups), {self.with_laptop, self.with_tower})
+
+    def test_a_word_goes_to_the_one_it_is_meant_for(self):
+        self.desk.link.send({"t": "enter", "edge": "left", "at": 0.5}, pair=self.with_laptop)
+        self.assertEqual(self.laptop.expect("message")["t"], "enter")
+        self.assertTrue(self.tower.quiet("message", 0.4))
+        self.desk.link.send({"t": "note"})  # to all
+        self.assertEqual(self.tower.expect("message")["t"], "note")
+        self.assertEqual(self.laptop.expect("message")["t"], "note")
+
+    def test_each_is_told_what_is_meant_for_it(self):
+        self.desk.link.set_status({"name": "desk", "channel": 0}, {self.with_laptop: {"edge": "left"}, self.with_tower: {"edge": "right"}})
+        self.assertEqual(self.laptop.expect("status")["edge"], "left")
+        self.assertEqual(self.tower.expect("status")["edge"], "right")
+
+    def test_files_go_to_one_of_the_two(self):
+        source = os.path.join(self.folder, "note.txt")
+        with open(source, "w") as f:
+            f.write("for the tower")
+        self.tower.link.accept_files(1024 * 1024)
+        self.laptop.link.accept_files(1024 * 1024)
+        self.desk.link.offer_files(*flow_files.collect([source], 1024 * 1024), pair=self.with_tower)
+        arrived = self.tower.expect("files", timeout=15)
+        with open(arrived["paths"][0]) as f:
+            self.assertEqual(f.read(), "for the tower")
+        self.assertTrue(self.laptop.quiet("files", 0.3))
+
+    def test_the_two_at_the_ends_are_not_linked_with_each_other(self):
+        self.laptop.link.send({"t": "note"})
+        self.assertEqual(self.desk.expect("message")["t"], "note")
+        self.assertTrue(self.tower.quiet("message", 0.4))
+
+
 class Beacons(unittest.TestCase):
     def test_a_signed_call_is_read_only_with_the_key_and_in_time(self):
         data = json.dumps(flow.here_beacon(KEY, "abc", 5000, when=1000)).encode()
-        self.assertEqual(flow.read_beacon(data, KEY, now=1050), {"t": "here", "id": "abc", "port": 5000})
+        self.assertEqual(flow.read_beacon(data, KEY, now=1050),
+                         {"t": "here", "pair": flow.pair_id(KEY), "id": "abc", "port": 5000})
+        self.assertIsNotNone(flow.read_beacon(data, {flow.pair_id(KEY): KEY, "other": "ZZZZ-ZZZZ-ZZZZ-ZZZZ"}, now=1050))
         self.assertIsNone(flow.read_beacon(data, "ZZZZ-ZZZZ-ZZZZ-ZZZZ", now=1050))
         self.assertIsNone(flow.read_beacon(data, None, now=1050))
         self.assertIsNone(flow.read_beacon(data, KEY, now=1000 + flow.BEACON_AGE + 1))
@@ -371,9 +448,18 @@ class Files(TwoComputers):
         self.desk.expect("files-progress")
         asked = time.monotonic()
         self.desk.link.send({"t": "enter", "edge": "right", "at": 0.5})
-        self.assertEqual(self.laptop.expect("message")["t"], "enter")
-        self.assertLess(time.monotonic() - asked, 1.0)
-        self.assertEqual(self.laptop.expect("files", timeout=30)["total"], 300 * 1024 * 1024)
+        seen, deadline = {}, time.monotonic() + 30
+        while len(seen) < 2 and time.monotonic() < deadline:  # in whichever order the two come
+            try:
+                kind, payload = self.laptop.heard.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            if kind == "message":
+                seen["word"] = time.monotonic() - asked
+            elif kind == "files":
+                seen["files"] = payload
+        self.assertLess(seen["word"], 3.0)  # at once, not after the file
+        self.assertEqual(seen["files"]["total"], 300 * 1024 * 1024)
         self.assertEqual(self.desk.expect("files-sent")["count"], 1)
 
     def test_a_transfer_under_way_outlives_a_link_that_drops(self):
@@ -381,7 +467,7 @@ class Files(TwoComputers):
         self.laptop.link.accept_files(4 * 1024 ** 3)
         self.desk.link.offer_files(*flow_files.collect([self.big(300)], 4 * 1024 ** 3))
         self.desk.expect("files-progress")
-        self.desk.link._call(lambda: self.desk.link._conn.close())  # the link breaks; the files have their own connection
+        self.desk.link._call(lambda: next(iter(self.desk.link._conns.values())).close())  # the link breaks; the files have their own connection
         self.assertEqual(self.laptop.expect("files", timeout=30)["total"], 300 * 1024 * 1024)
 
     def test_more_than_the_other_side_accepts_is_refused_before_anything_is_sent(self):

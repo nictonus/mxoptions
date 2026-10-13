@@ -11,6 +11,7 @@ log = logging.getLogger(__name__)
 ROOT = 0x0000
 FEATURE_SET = 0x0001
 DEVICE_NAME = 0x0005
+BATTERY_STATUS = 0x1000    # the battery of mice before the MX Master 3S: level and status, numbered as below
 UNIFIED_BATTERY = 0x1004
 HAPTIC = 0x19B0
 FORCE_SENSING_BUTTON = 0x19C0
@@ -73,6 +74,19 @@ WAVE_STATE = 0x01
 WAVE_CONFIRM = 0x00
 WAVE_COMPLETED = 0x07
 
+# What DEVICE_NAME says a device is
+KIND_MOUSE = 3
+KIND_TRACKBALL = 5
+
+
+def family(name):
+    """Which picture fits a mouse called ``name``: "mx4" (the MX Master 4, also while no mouse is known),
+    "master" (an earlier MX Master: the same build without the haptic panel) or "other"."""
+    text = " ".join(name.lower().split())
+    if not text or "mx master 4" in text:
+        return "mx4"
+    return "master" if "mx master" in text else "other"
+
 
 class Control:
     def __init__(self, cid, tid, flags):
@@ -104,6 +118,7 @@ class Mouse:
         self.dpi_list = None
         self.dpi_default = 1000
         self.smartshift = None  # {"torque": bool, "default_threshold", "default_torque"}
+        self._smartshift_feature = None  # SMART_SHIFT_ENHANCED, SMART_SHIFT or None
         self.wheel = None  # {"multiplier", "has_invert"}
         self.thumbwheel = None  # {"native_res", "diverted_res", "direction"}
         self.haptic_waveforms = []
@@ -157,7 +172,8 @@ class Mouse:
                 "default_torque": caps[2],
             }
         elif self._smartshift_feature == SMART_SHIFT:
-            self.smartshift = {"torque": False, "default_threshold": 10, "default_torque": 0}
+            default = self.call(SMART_SHIFT, 0)[2]  # the mouse's own threshold; the ratchet force cannot be set
+            self.smartshift = {"torque": False, "default_threshold": default if 0 < default <= 50 else 10, "default_torque": 0}
 
         if self.has(HIRES_WHEEL):
             caps = self.call(HIRES_WHEEL, 0)
@@ -184,6 +200,30 @@ class Mouse:
         if self.has(CHANGE_HOST):
             self.host_count = self.call(CHANGE_HOST, 0)[0]
         return self
+
+    def adopt(self, known):
+        """Take over what was learned about this mouse on an earlier connection instead of asking for all
+        of it again (dozens of requests, a second or two over Bluetooth). ``known`` is the Mouse loaded
+        then. Returns False if this is not that mouse: its name or the number of its features differs."""
+        t, d = self.transport, self.devidx
+        try:
+            feature_set = t.request(d, 0x00, 0, struct.pack("!H", FEATURE_SET))[0]
+            name_index = known.features.get(DEVICE_NAME)
+            if (name_index is None or feature_set != known.features.get(FEATURE_SET)
+                    or t.request(d, feature_set, 0)[0] != len(known.features) - 1):
+                return False
+            length, name = t.request(d, name_index, 0)[0], b""
+            while len(name) < length:
+                chunk = t.request(d, name_index, 1, bytes([len(name)]))
+                name += chunk[: length - len(name)]
+            if name.decode("utf-8", "replace") != known.name:
+                return False
+        except (HidppError, IndexError):
+            return False
+        for field in ("features", "index_to_feature", "name", "kind", "controls", "dpi_range", "dpi_list", "dpi_default",
+                      "smartshift", "_smartshift_feature", "wheel", "thumbwheel", "haptic_waveforms", "force", "host_count"):
+            setattr(self, field, getattr(known, field))
+        return True
 
     def _load_dpi(self):
         raw = self.call(ADJUSTABLE_DPI, 1, 0)[1:]
@@ -223,9 +263,11 @@ class Mouse:
 
     def get_smartshift(self):
         """Return (mode, auto_disengage, torque)."""
-        fn = 1 if self._smartshift_feature == SMART_SHIFT_ENHANCED else 0
-        reply = self.call(self._smartshift_feature, fn)
-        return reply[0], reply[1], reply[2]
+        if self._smartshift_feature == SMART_SHIFT_ENHANCED:
+            reply = self.call(SMART_SHIFT_ENHANCED, 1)
+            return reply[0], reply[1], reply[2]
+        reply = self.call(SMART_SHIFT, 0)
+        return reply[0], reply[1], 0  # its third value is the default threshold, not a force
 
     def set_smartshift(self, mode, auto_disengage=0, torque=0):
         fn = 2 if self._smartshift_feature == SMART_SHIFT_ENHANCED else 1
@@ -278,9 +320,11 @@ class Mouse:
         level = max(1, min(100, int(level)))
         self.call(HAPTIC, 2, 1 if enabled else 0, level)
 
-    def play_haptic(self, waveform):
+    def play_haptic(self, waveform, wait=True):
+        """Play a pattern. With ``wait`` off the mouse's answer is not waited for: for a row of
+        pulses that must not hold anything else up when the mouse is slow to answer."""
         if waveform in self.haptic_waveforms:
-            self.call(HAPTIC, 4, waveform)
+            self.call(HAPTIC, 4, waveform, no_reply=not wait)
 
     def get_force(self):
         return struct.unpack("!H", self.call(FORCE_SENSING_BUTTON, 2, 0)[:2])[0]
@@ -294,10 +338,12 @@ class Mouse:
 
     def get_battery(self):
         """Return (percent, status)."""
-        if not self.has(UNIFIED_BATTERY):
-            return None
-        reply = self.call(UNIFIED_BATTERY, 1)
-        return reply[0], reply[2]
+        if self.has(UNIFIED_BATTERY):
+            reply = self.call(UNIFIED_BATTERY, 1)
+            return reply[0], reply[2]
+        if self.has(BATTERY_STATUS):
+            return battery_status(self.call(BATTERY_STATUS, 0))
+        return None
 
     def get_hosts(self):
         """Return (current_host, [{"paired": bool, "name": str}, ...])."""
@@ -322,19 +368,30 @@ class Mouse:
         self.call(CHANGE_HOST, 1, host, no_reply=True)
 
 
-def find_mouse(transport):
-    """Probe the transport's slots and return the first loaded HID++ 2.0 mouse, or None."""
+def battery_status(data):
+    """(percent, status) from what BATTERY_STATUS reports: [level, next level, status]. Its statuses
+    0..4 are the BATTERY_* above; the rest are faults, shown as not charging."""
+    return data[0], data[2] if data[2] <= BATTERY_SLOW_CHARGE else BATTERY_DISCHARGING
+
+
+def find_mouse(transport, known=None, hurry=False):
+    """Probe the transport's slots and return the first loaded HID++ 2.0 mouse, or None. ``known`` is
+    a mouse loaded on an earlier connection: if it is the one found, what was learned then is reused.
+    ``hurry``: the mouse is expected any moment, so do not wait long for an answer before asking again."""
     for devidx in transport.slots():
-        version = transport.ping(devidx, timeout=1.5, retries=2)
+        version = transport.ping(devidx, timeout=0.4 if hurry else 1.5, retries=4 if hurry else 2)
         if not version or version[0] < 2:
             continue
         mouse = Mouse(transport, devidx)
+        if known is not None and known.devidx == devidx and mouse.adopt(known):
+            return mouse
         try:
             mouse.load()
         except (HidppError, IndexError, struct.error) as e:
             log.debug("slot %s did not load: %s", devidx, e)
             continue
-        if mouse.has(REPROG_CONTROLS_V4) and mouse.has(ADJUSTABLE_DPI):
+        # Keyboards on the same receiver have reprogrammable keys too: it has to be a pointing device.
+        if mouse.has(REPROG_CONTROLS_V4) and (mouse.has(ADJUSTABLE_DPI) or mouse.kind in (KIND_MOUSE, KIND_TRACKBALL)):
             return mouse
     return None
 

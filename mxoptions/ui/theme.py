@@ -165,6 +165,9 @@ QPushButton#danger:hover {{ border-color: {DANGER}; }}
 QPushButton#tool {{ background: transparent; border: 1px solid {BORDER}; border-radius: 8px; padding: 4px 8px; min-width: 18px; }}
 QPushButton#tool:hover {{ border-color: {ACCENT_DIM}; background: {CARD_HOVER}; }}
 QPushButton#tool:disabled {{ color: {DISABLED}; border-color: {CARD_HOVER}; }}
+QPushButton#iconChoice {{ background: transparent; border: 1px solid {BORDER}; border-radius: 10px; padding: 0; }}
+QPushButton#iconChoice:hover {{ border-color: {ACCENT_DIM}; background: {CARD_HOVER}; }}
+QPushButton#iconChoice:checked {{ border: 2px solid {ACCENT}; background: {CARD_HOVER}; }}
 
 #segment {{ background: {BG}; border: 1px solid {BORDER}; border-radius: 10px; }}
 #segmentButton {{ background: transparent; border: none; border-radius: 8px; padding: 6px 14px; color: {MUTED}; }}

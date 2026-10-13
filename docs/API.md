@@ -77,7 +77,7 @@ number, an action for an action). Numbers are clamped to their range; unknown wo
 | Signal | When |
 |---|---|
 | `ButtonPressed(s button)`, `ButtonReleased(s button)` | A button MX Options handles went down or up: `middle`, `back`, `forward`, `gesture`, `smartshift`, `panel`. Buttons left on *Default* are handled by the mouse itself and are not reported, nor are the two main buttons. |
-| `Gesture(s direction)` | A gesture was recognised: `tap`, `up`, `down`, `left`, `right`. |
+| `Gesture(s direction)` | A gesture was recognised: `tap`, `up`, `down`, `left`, `right`. A shape drawn with the button held is announced by its name: `down_right`, `up_down`, `circle_cw`, `zigzag_h` and so on. |
 | `WheelModeChanged(s mode)` | The wheel went to `freespin` or back to `ratchet`: by the mode button, by a request, or by SmartShift letting it go at speed and catching it when it stops. The mouse does not announce SmartShift's own changes, so those are worked out from the wheel's speed and can be off by a notch or two. |
 | `Hook(s name, s phase)` | A "Signal to another program" action ran (see below). |
 | `ConnectedChanged(b)`, `BatteryChanged(i percent, b charging)`, `DpiChanged(i)`, `ConfigChanged()` | The corresponding state changed. |
@@ -150,11 +150,13 @@ Buttons additionally take `{"type": "default"}` (leave it to the mouse), `{"type
 | `wheel_click.mode` | `off`, `haptic`, `sound` or `both`: the click when the wheel changes mode. |
 | `thumbwheel.function` | `hscroll`, `zoom`, `volume`, `tabs`, `desktops`, `brightness`. |
 | `haptics.enabled`, `haptics.level` | Vibration on/off and strength (1–100). |
+| `rumble.enabled`, `rumble.light`, `rumble.medium`, `rumble.strong`, `rumble.interval`, `rumble.gain` | Rumble from games on the mouse: on/off (a virtual gamepad appears while it is on), the pattern numbers for weak, medium and strong rumble, milliseconds between pulses, sensitivity (0.5–2.0). |
 | `buttons.<button>` | The action of `middle`, `back`, `forward`, `gesture`, `smartshift`, `panel`. |
 | `gestures.trigger`, `gestures.min_mm`, `gestures.far_mm`, `gestures.dead`, `gestures.bias` | How swipes are read. |
 | `ring.bubbles`, `ring.style`, `ring.size` | The user's Actions Ring. |
-| `flow.enabled`, `flow.edge`, `flow.push_mm`, `flow.corner`, `flow.fullscreen` | Flow: on/off, the edge that leads to the other computer (`left`, `right`, `top`, `bottom`), millimetres to push past it, percent of the edge kept free at each end, whether to cross under a full-screen window. |
-| `flow.clipboard`, `flow.files`, `flow.files_max_mb` | Flow: whether copied text and pictures go along, whether files do, and the most megabytes in one go. `flow.key` is the pairing key: treat it as a password. |
+| `flow.enabled`, `flow.push_mm`, `flow.corner`, `flow.fullscreen` | Flow: on/off, millimetres to push past the edge, percent of the edge kept free at each end, whether to cross under a full-screen window. |
+| `flow.peers` | The other computers of Flow, two at most, each with `name`, `address`, `edge` (`left`, `right`, `top`, `bottom`: the side it stands on) and `key`, the pairing key: treat that as a password. A single field is addressed like `flow.peers.0.edge`. |
+| `flow.clipboard`, `flow.files`, `flow.files_max_mb`, `flow.cue_arrived`, `flow.cue_failed` | Flow: whether copied text and pictures go along, whether files do, the most megabytes in one go, and the vibration patterns for files that have arrived and files that could not be brought over. |
 
 ## Example: a Python client
 

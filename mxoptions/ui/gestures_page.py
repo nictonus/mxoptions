@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QLabel, QPushButton, QVB
 from .. import actions, config, gestures
 from ..i18n import _
 from . import theme
+from .action_picker import SHAPE_LABELS
 from .pages import BUTTON_TITLES, ScrollPage
 from .widgets import Card, PatternRow, Row, Segmented, SliderRow, Switch, hint_label, ui_scale
 
@@ -151,7 +152,7 @@ class GesturePad(QWidget):
             clip.addEllipse(circle(radius))
             painter.setClipPath(clip)
             line = QPolygonF([QPointF(centre.x() + x * scale, centre.y() + y * scale) for x, y in points])
-            failed = result in ("cancelled", "diagonal")
+            failed = result in ("cancelled", "diagonal", "unknown")
             color = QColor(theme.WARN if failed else theme.ACCENT_INK)
             pen = QPen(color, 2.6)
             pen.setCapStyle(Qt.PenCapStyle.RoundCap)
@@ -395,7 +396,7 @@ class GesturesPage(ScrollPage):
         result = event.get("result")
         fired = event.get("fired") or []
         if result is None:  # still held
-            names = " ".join(_AXES[d][1] for d in fired)
+            names = " ".join(_AXES[d][1] for d in fired if d in _AXES)
             self.caption.setText((names + "  " if names else "") + _("{:.0f} mm").format(length))
         elif result == "tap":
             self.caption.setText(_("Tap") + (f"  ·  {self._tap_label}" if self._tap_label else ""))
@@ -404,7 +405,11 @@ class GesturesPage(ScrollPage):
         elif result == "diagonal":
             self.caption.setText(_("Ignored: too diagonal ({:.0f}° off)").format(self._off_axis(x, y)))
         elif result == "repeat":
-            self.caption.setText(" ".join(_AXES[d][1] for d in fired))
+            self.caption.setText(" ".join(_AXES[d][1] for d in fired if d in _AXES))
+        elif result in gestures.SHAPES:
+            self.caption.setText(_("Shape: {}").format(_(SHAPE_LABELS[result])))
+        elif result == "unknown":
+            self.caption.setText(_("A shape with no action"))
         else:
             self.caption.setText("{}  {}  ·  {}  ·  {}".format(
                 _AXES[result][1], _(DIRECTION_NAMES[result]), _("{:.0f} mm").format(length),

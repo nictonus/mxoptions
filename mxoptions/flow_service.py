@@ -5,21 +5,21 @@ Flow is on, say when the pointer comes to rest against the chosen edge and when 
 How hard it is then pushed on is measured from the mouse itself, by the engine. Elsewhere there
 is no such watcher, and the "Move to the other computer" action is the way across."""
 
+import collections
+import copy
 import json
 import logging
 import os
+import secrets
 import socket
 import tempfile
 import time
-
-import collections
 
 from PySide6.QtCore import ClassInfo, QObject, QTimer, Signal, Slot
 from PySide6.QtDBus import QDBus, QDBusConnection, QDBusMessage, QDBusServiceWatcher
 from PySide6.QtGui import QGuiApplication
 
 from . import __version__, clipboard, flow, flow_files, flow_pairing, vinput
-from .i18n import _
 
 log = logging.getLogger(__name__)
 
@@ -32,15 +32,17 @@ ARRIVAL_QUIET = 1.5  # s after the mouse arrived during which the edge does not 
 ARRIVAL_WAIT = 12.0  # s the mouse may take to arrive once the other computer has sent it
 OFFER_AGE = 4.0      # s after which a computer that stopped announcing its pairing code is forgotten
 MIB = 1024 * 1024
-ANNOUNCE_FROM = 5 * MIB  # files of this size and more are announced when they start coming, not only when they are here
 RATE_WINDOW = 10.0       # s the speed of a file transfer is averaged over
-# The script only looks at where the pointer is. It speaks up when the pointer reaches the outer
-# edge (one no other screen continues behind), when it slides along it, and when it leaves.
+RESEND_FOR = 120.0       # s after a crossing during which what was copied is sent again if the link had failed it
+# The script only looks at where the pointer is. For every edge that leads to another computer it
+# speaks up when the pointer reaches it (the outer edge: one no other screen continues behind), when
+# it slides along it, and when it leaves.
 _EDGE_SCRIPT = """\
-// Loaded by MX Options while Flow is on: says when the pointer rests against the %(edge)s edge of the desktop.
-var EDGE = "%(edge)s", at = false, last = -1e9;
+// Loaded by MX Options while Flow is on: says when the pointer rests against an edge of the desktop
+// that another computer is behind.
+var EDGES = %(edges)s, at = {}, last = {};
 // The screen the pointer is on and how far the pointer is from its EDGE side, if no other screen continues there.
-function probe(pos) {
+function probe(pos, EDGE) {
     var screens = workspace.screens;
     for (var i = 0; i < screens.length; i++) {
         var g = screens[i].geometry;
@@ -63,21 +65,24 @@ function tell(report) {
 }
 workspace.cursorPosChanged.connect(function () {
     var pos = workspace.cursorPos;
-    var hit = probe(pos);
-    // Reaching the edge takes touching it; leaving it takes a few pixels, because an edge that the desktop
-    // uses for something of its own pushes the pointer a pixel back every time it is touched.
-    if (hit && (at || hit.away <= 1.5)) {
-        var along = (EDGE == "left" || EDGE == "right") ? pos.y : pos.x;
-        if (!at || Math.abs(along - last) >= 8) {
-            var front = workspace.activeWindow, g = hit.screen;
-            at = true;
-            last = along;
-            tell({at: true, edge: EDGE, x: pos.x, y: pos.y, screen: [g.x, g.y, g.width, g.height],
-                  full: !!(front && front.fullScreen)});
+    for (var k = 0; k < EDGES.length; k++) {
+        var EDGE = EDGES[k];
+        var hit = probe(pos, EDGE);
+        // Reaching the edge takes touching it; leaving it takes a few pixels, because an edge that the desktop
+        // uses for something of its own pushes the pointer a pixel back every time it is touched.
+        if (hit && (at[EDGE] || hit.away <= 1.5)) {
+            var along = (EDGE == "left" || EDGE == "right") ? pos.y : pos.x;
+            if (!at[EDGE] || Math.abs(along - last[EDGE]) >= 8) {
+                var front = workspace.activeWindow, g = hit.screen;
+                at[EDGE] = true;
+                last[EDGE] = along;
+                tell({at: true, edge: EDGE, x: pos.x, y: pos.y, screen: [g.x, g.y, g.width, g.height],
+                      full: !!(front && front.fullScreen)});
+            }
+        } else if (at[EDGE]) {
+            at[EDGE] = false;
+            tell({at: false, edge: EDGE});
         }
-    } else if (at) {
-        at = false;
-        tell({at: false, edge: EDGE});
     }
 });
 """
@@ -111,31 +116,30 @@ class _EdgeSink(QObject):
 
 
 class FlowService(QObject):
-    changed = Signal()                 # what status() tells has changed
-    _from_link = Signal(str, object)   # carries the link's events from its thread onto this one
+    changed = Signal()                      # what status() tells has changed
+    _from_link = Signal(str, object, str)   # carries the link's events from its thread onto this one
 
     def __init__(self, store, parent=None):
         super().__init__(parent)
         self.store = store
-        # The program sets this to something that tells the user: ("coming", {"count", "total", "name"}) when a lot
-        # of copied files start to arrive, ("files", {"count", "name"}) when copied files are here, ("skipped",
-        # {"why", "name", "limit"}) when they were not brought over.
-        self.notify = lambda kind, details: None
-        self._peer = None          # the other computer's status while the link is up
+        self._peers = {}           # pair -> what that computer says about itself, while its link is up
         self._problem = ""         # why this computer cannot listen
         self._pointer = None       # vinput.AbsolutePointer while Flow is on
         self._applied = None       # the settings in force
-        self._edge = None          # the edge KWin watches for us
+        self._edges = frozenset()  # the edges KWin watches for us
         self._exported = False
-        self._armed = False        # the engine is measuring the push against the edge
+        self._armed = None         # the pairing whose edge the pointer rests against: the engine is measuring the push
+        self._leaving = None       # the pairing whose computer the mouse is being sent to
         self._along = None         # where along the edge the pointer is, 0..1
-        self._leaving = None       # where the pointer is leaving, until the engine says the mouse has gone
-        self._quiet_until = 0.0    # until then the edge does nothing: the mouse is arriving or has only just arrived
-        self._arriving = False     # the other computer has sent the mouse and it is not here yet
-        self._shared = None        # self.clipboard.signature() of what both computers have
-        self._offered_mark = None  # ... and of the files being sent, which it will be once they have arrived
+        self._quiet_until = 0.0    # until then the edges do nothing: the mouse is arriving or has only just arrived
+        self._arriving = False     # another computer has sent the mouse and it is not here yet
+        self._shared = {}          # pair -> clipboard.signature() of what both computers have
+        self._offered = {}         # pair -> ... of the files being sent, which it will be once they have arrived
+        self._unconfirmed = {}     # pair -> (token, signature) of text or a picture sent and not yet confirmed
+        self._crossed = ("", 0.0)  # the pairing the mouse last went to, and when: what was copied belongs there
+        self._channels = {}        # pair -> the channel that computer last said it is on (kept while its link is down)
         self._transfer = None      # files on their way: {"done", "total", "count", "sending", "samples"}
-        self._adopting = False     # the edge is being changed to match the other computer, not by the user
+        self._adopting = False     # an edge is being changed to match another computer, not by the user
         self._pairing = None       # while this computer shows a code: {"code", "left", "until"}
         self._offers = {}          # computers nearby showing a code: id -> {"id", "name", "address", "port", "seen"}
         self._pair_error = ""      # why the last attempt to pair failed: "code", "closed", "unreachable"
@@ -151,9 +155,31 @@ class FlowService(QObject):
         watcher = QDBusServiceWatcher(KWIN, QDBusConnection.sessionBus(),
                                       QDBusServiceWatcher.WatchModeFlag.WatchForRegistration, self)
         watcher.serviceRegistered.connect(lambda _name: self._kwin_started())
+        if not store.cfg["flow"]["id"]:
+            store.set("flow", "id", secrets.token_hex(8))
         store.changed.connect(self._configure)
         store.state_changed.connect(lambda _state: self._mouse_changed())
         self._configure()
+
+    # -- the other computers, as the settings keep them -----------------------------------
+
+    def _entries(self):
+        """[(pair, entry)] for the other computers in the settings."""
+        return [(flow.pair_id(entry["key"]), entry) for entry in self.store.cfg["flow"]["peers"]]
+
+    def _entry(self, pair):
+        return next((entry for found, entry in self._entries() if found == pair), None)
+
+    def _change(self, pair, **values):
+        """Change something about one of them in the settings."""
+        peers = copy.deepcopy(self.store.cfg["flow"]["peers"])
+        for entry in peers:
+            if flow.pair_id(entry["key"]) == pair:
+                entry.update(values)
+        self.store.set("flow", "peers", peers)
+
+    def _name(self, pair):
+        return (self._peers.get(pair) or {}).get("name") or (self._entry(pair) or {}).get("name") or ""
 
     # -- for the settings page ---------------------------------------------------
 
@@ -163,17 +189,22 @@ class FlowService(QObject):
         if self._pairing is not None:
             pairing = {"code": self._pairing["code"], "left": self._pairing["left"],
                        "seconds": max(0, int(self._pairing["until"] - time.monotonic()))}
+        peers = []
+        for pair, entry in self._entries():
+            said = self._peers.get(pair)
+            peers.append({"pair": pair, "name": self._name(pair), "edge": entry["edge"], "address": entry["address"],
+                          "key": entry["key"], "linked": said is not None, "channel": (said or {}).get("channel"),
+                          "present": bool((said or {}).get("present")), "quiet": bool((said or {}).get("quiet"))})
         return {
             "supported": flow.supported(),
             "on": self._on(),
-            "paired": flow.key_usable(cfg["key"]),
+            "peers": peers,
             "address": flow.local_address(),
             "problem": self._problem,
-            "peer": dict(self._peer) if self._peer else None,
             "channel": cfg["channel"],
             "here": bool(self.store.state["connected"]),   # the mouse is on this computer
-            "edges": self._edge is not None,                # the screen edge is being watched
-            "rich": self.clipboard.rich(),                       # pictures and files can cross, not only text
+            "edges": bool(self._edges),                     # the screen edges are being watched
+            "rich": self.clipboard.rich(),                  # pictures and files can cross, not only text
             "pairing": pairing,
             "transfer": self._transfer_status(),
             "offers": sorted(({key: offer[key] for key in ("id", "name", "address", "port")} for offer in self._offers.values()),
@@ -190,14 +221,14 @@ class FlowService(QObject):
         if len(samples) >= 2 and samples[-1][0] - samples[0][0] >= 1.0:
             rate = (samples[-1][1] - samples[0][1]) / (samples[-1][0] - samples[0][0])
         return {"done": transfer["done"], "total": transfer["total"], "count": transfer["count"], "sending": transfer["sending"],
-                "rate": rate}
+                "rate": rate, "name": self._name(transfer["pair"])}
 
-    def _progress(self, payload, sending=None):
+    def _progress(self, payload, pair, sending=None):
         now = time.monotonic()
         if self._transfer is None:
             self._transfer = {"samples": collections.deque()}
         transfer = self._transfer
-        transfer.update(done=payload.get("done", 0), total=payload["total"], count=payload["count"],
+        transfer.update(done=payload.get("done", 0), total=payload["total"], count=payload["count"], pair=pair,
                         sending=payload.get("sending", False) if sending is None else sending)
         transfer["samples"].append((now, transfer["done"]))
         while now - transfer["samples"][0][0] > RATE_WINDOW:
@@ -236,13 +267,28 @@ class FlowService(QObject):
         self.link.pair_with(address, port, flow_pairing.clean_code(code), self._info())
         self.changed.emit()
 
-    def unpair(self):
-        """Forget the other computer."""
-        cfg = dict(self.store.cfg["flow"], enabled=False, key="", peer="", peer_name="")
+    def unpair(self, pair):
+        """Forget one of the other computers."""
+        cfg = copy.deepcopy(self.store.cfg["flow"])
+        cfg["peers"] = [entry for entry in cfg["peers"] if flow.pair_id(entry["key"]) != pair]
+        cfg["enabled"] = cfg["enabled"] and bool(cfg["peers"])
         self.store.set_section("flow", cfg)
 
+    def place(self, pair, edge):
+        """Put one of the other computers behind ``edge``; one that stood there changes places with it."""
+        peers = copy.deepcopy(self.store.cfg["flow"]["peers"])
+        moved = next((entry for entry in peers if flow.pair_id(entry["key"]) == pair), None)
+        if moved is None or edge not in flow.EDGES or moved["edge"] == edge:
+            return
+        for entry in peers:
+            if entry is not moved and entry["edge"] == edge:
+                entry["edge"] = moved["edge"]
+        moved["edge"] = edge
+        self.store.set("flow", "peers", peers)
+
     def _info(self):
-        return {"name": socket.gethostname(), "port": self.store.cfg["flow"]["port"]}
+        cfg = self.store.cfg["flow"]
+        return {"name": socket.gethostname(), "port": cfg["port"], "id": cfg["id"]}
 
     def _sync_tick(self, watching=None):
         if watching is not None:
@@ -266,17 +312,25 @@ class FlowService(QObject):
         return bool(self._applied and self._applied[0])
 
     def _configure(self):
-        cfg = self.store.cfg["flow"]
-        on = cfg["enabled"] and flow.supported() and flow.key_usable(cfg["key"])
-        wanted = (on, cfg["key"], cfg["port"], cfg["peer"], cfg["edge"])
+        cfg, entries = self.store.cfg["flow"], self._entries()
+        on = bool(cfg["enabled"] and flow.supported() and entries)
+        wanted = (on, cfg["port"], tuple((entry["key"], entry["address"], entry["edge"]) for _pair, entry in entries))
         self.link.accept_files(cfg["files_max_mb"] * MIB if on and cfg["files"] and self.clipboard.rich() else None)
         if wanted == self._applied:
+            self._send_status()  # when an edge was chosen may have changed all the same
             return
         previous, self._applied = self._applied, wanted
-        if previous is not None and previous[4] != cfg["edge"] and not self._adopting:
-            self.store.set("flow", "edge_at", time.time())  # chosen here and now: the other computer follows
+        if previous is not None and not self._adopting:
+            before = {key: edge for key, _address, edge in previous[2]}
+            moved = {entry["key"] for _pair, entry in entries if before.get(entry["key"], entry["edge"]) != entry["edge"]}
+            if moved:  # chosen here and now: the computers behind those edges follow
+                peers = copy.deepcopy(cfg["peers"])
+                for entry in peers:
+                    if entry["key"] in moved:
+                        entry["edge_at"] = time.time()
+                self.store.set("flow", "peers", peers)
         if on:
-            self.link.configure(cfg["key"], cfg["port"], cfg["peer"])
+            self.link.configure([{"key": entry["key"], "address": entry["address"]} for _pair, entry in entries], cfg["port"])
             if self._pointer is None:
                 self._pointer = vinput.create_pointer()
         else:
@@ -286,23 +340,24 @@ class FlowService(QObject):
                 self._pointer.close()
                 self._pointer = None
         self._disarm()
-        self._watch_edge(cfg["edge"] if on else None)
+        self._watch_edges(frozenset(entry["edge"] for _pair, entry in entries) if on else frozenset())
         self._send_status()
         self.changed.emit()
 
     def _send_status(self):
         state, cfg = self.store.state, self.store.cfg["flow"]
-        self.link.set_status({"name": socket.gethostname(), "app": __version__, "channel": cfg["channel"],
-                              "present": bool(state["connected"]), "edge": cfg["edge"], "edge_at": cfg["edge_at"]})
+        self.link.set_status(
+            {"name": socket.gethostname(), "app": __version__, "channel": cfg["channel"], "present": bool(state["connected"])},
+            {pair: {"edge": entry["edge"], "edge_at": entry["edge_at"]} for pair, entry in self._entries()})
 
     def _mouse_changed(self):
         state = self.store.state
         if state["connected"] and state.get("hosts"):
-            # The channel the mouse is on while it is here is this computer's: the other one needs it to send the mouse back.
+            # The channel the mouse is on while it is here is this computer's: the others need it to send the mouse back.
             if state["current_host"] != self.store.cfg["flow"]["channel"]:
                 self.store.set("flow", "channel", state["current_host"])
         if not state["connected"]:
-            self._armed = False  # the engine dropped the push when the mouse went
+            self._armed = None  # the engine dropped the push when the mouse went
         elif self._arriving:
             # It is here. A hand that kept moving while the mouse was on its way must not push it straight back.
             self._arriving = False
@@ -310,7 +365,7 @@ class FlowService(QObject):
         self._send_status()
         self.changed.emit()
 
-    # -- the screen edge ---------------------------------------------------------------
+    # -- the screen edges ---------------------------------------------------------------
 
     def _export(self, wanted):
         bus = QDBusConnection.sessionBus()
@@ -326,13 +381,13 @@ class FlowService(QObject):
             self._exported = False
         return self._exported
 
-    def _watch_edge(self, edge):
-        if edge == self._edge:
+    def _watch_edges(self, edges):
+        if edges == self._edges:
             return
-        if self._edge is not None:
+        if self._edges:
             _kwin("unloadScript", SCRIPT_NAME)
-            self._edge = None
-        if edge is None:
+            self._edges = frozenset()
+        if not edges:
             self._export(False)
             return
         if not self._export(True) or not kwin_running():
@@ -340,7 +395,7 @@ class FlowService(QObject):
         path = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir(), SCRIPT_NAME + ".js")
         try:
             with open(path, "w") as f:
-                f.write(_EDGE_SCRIPT % {"edge": edge, "service": SERVICE, "path": PATH, "interface": INTERFACE})
+                f.write(_EDGE_SCRIPT % {"edges": json.dumps(sorted(edges)), "service": SERVICE, "path": PATH, "interface": INTERFACE})
         except OSError as e:
             log.warning("flow: could not write the edge script: %s", e)
             return
@@ -350,142 +405,196 @@ class FlowService(QObject):
             log.warning("flow: KWin did not take the edge script")
             return
         _kwin("start")  # runs what is loaded and not running yet
-        self._edge = edge
-        log.info("flow: watching the %s edge", edge)
+        self._edges = edges
+        log.info("flow: watching the %s edge", " and the ".join(sorted(edges)))
 
     def _kwin_started(self):
         """KWin came up (again): what it had loaded for us is gone."""
-        self._edge = None
+        self._edges = frozenset()
         if self._on():
-            self._watch_edge(self.store.cfg["flow"]["edge"])
+            self._watch_edges(frozenset(entry["edge"] for _pair, entry in self._entries()))
             self.changed.emit()
 
     def _edge_report(self, report):
-        """The pointer came to the edge, slid along it, or left it."""
+        """The pointer came to an edge, slid along it, or left it."""
         cfg = self.store.cfg["flow"]
         try:
             data = json.loads(report)
+            edge = data["edge"]
+            pair = next((found for found, entry in self._entries() if entry["edge"] == edge), None)
             if not data.get("at"):
-                self._disarm()
+                if pair is not None and pair == self._armed:
+                    self._disarm()
                 return
-            edge, pos = data["edge"], (float(data["x"]), float(data["y"]))
+            pos = (float(data["x"]), float(data["y"]))
             screen = tuple(float(value) for value in data["screen"])
-            if edge != cfg["edge"] or len(screen) != 4:
+            if pair is None or len(screen) != 4:
                 return
         except (ValueError, KeyError, TypeError):
             return
-        self._along = flow.leave_fraction(edge, pos, screen)
-        channel = self._target()
+        along = flow.leave_fraction(edge, pos, screen)
+        channel = self._target(pair)
         corner = cfg["corner"] / 100.0
-        wanted = (channel is not None and corner <= self._along <= 1.0 - corner
+        wanted = (channel is not None and corner <= along <= 1.0 - corner
                   and (cfg["fullscreen"] or not data.get("full")) and time.monotonic() >= self._quiet_until)
-        if wanted and not self._armed:
-            self._armed = True
-            self.store.engine.flow_arm(channel, edge, cfg["push_mm"])
-        elif not wanted:
+        if wanted:
+            self._along = along
+            if self._armed != pair:
+                self._disarm()
+                self._armed = pair
+                self.store.engine.flow_arm(channel, edge, cfg["push_mm"])
+        elif self._armed == pair:
             self._disarm()
 
     def _disarm(self):
-        if self._armed:
-            self._armed = False
+        if self._armed is not None:
+            self._armed = None
             self.store.engine.flow_disarm()
 
     # -- leaving and arriving ------------------------------------------------------------
 
-    def _target(self):
-        """The Easy-Switch channel to send the mouse to, or None if it would not be received there."""
-        state, peer = self.store.state, self._peer
-        if not self._on() or peer is None or not state["connected"]:
-            return None
+    def _target(self, pair):
+        """The Easy-Switch channel of the computer of ``pair``, or None if the mouse would not be received there."""
+        state, peer = self.store.state, self._peers.get(pair)
+        if not self._on() or peer is None or peer.get("quiet") or not state["connected"]:
+            return None  # also while it does not answer: it may be asleep, and the mouse would be stranded there
         channel = peer.get("channel")
         if not isinstance(channel, int) or isinstance(channel, bool) or channel < 0 or channel == state.get("current_host"):
-            return None  # the other computer has not seen the mouse yet: nobody knows where to send it
+            return None  # that computer has not seen the mouse yet: nobody knows where to send it
         return channel
 
     def on_engine(self, payload):
         """The engine's side of a handover (see engine.Listener.on_event, "flow")."""
         what, _detail = payload
-        if what == "asked":  # the action on a button, a gesture or the ring
-            channel = self._target()
-            if channel is not None and time.monotonic() >= self._quiet_until:
-                self._along = None
-                self.store.engine.flow_leave(channel, False)
+        if what == "asked":  # the action on a button, a gesture or the ring: to the first computer that can take the mouse
+            if time.monotonic() < self._quiet_until:
+                return
+            for pair, _entry in self._entries():
+                channel = self._target(pair)
+                if channel is not None:
+                    self._leaving, self._along = pair, None
+                    self.store.engine.flow_leave(channel, False)
+                    break
         elif what == "refused":
-            self._armed = False
+            self._armed = self._leaving = None
         elif what == "left":
-            self._armed = False
-            edge = self.store.cfg["flow"]["edge"] if self._along is not None else None
-            self.link.send({"t": "enter", "edge": edge, "at": self._along})
+            # which of the other computers it went to: the one on the channel the engine names
+            pair = next((found for found, channel in self._channels.items() if channel == _detail and self._entry(found)),
+                        self._armed or self._leaving)
+            self._armed = self._leaving = None
+            entry = self._entry(pair) if pair else None
+            if entry is None:
+                return
+            self._crossed = (pair, time.monotonic())
+            self.link.send({"t": "enter", "edge": entry["edge"] if self._along is not None else None, "at": self._along}, pair=pair)
             self._along = None
-            self._send_clipboard()
+            self._send_clipboard(pair)
 
-    def _send_clipboard(self):
+    def _send_clipboard(self, pair):
         cfg = self.store.cfg["flow"]
         if not cfg["clipboard"] and not cfg["files"]:
             return
+        if self._transfer is not None and not self._transfer["sending"]:
+            return  # files are on their way here and will replace this clipboard: what it holds now is not sent on
         content = self.clipboard.read(image_limit=flow.MAX_BLOB - 4096)
         mark = self.clipboard.signature(content)
-        if mark == self._shared:
-            return  # the other computer has it already
+        if mark == self._shared.get(pair):
+            return  # that computer has it already
         if content["files"]:
             if not cfg["files"]:
                 return
             try:
                 items, sources = flow_files.collect(content["files"], cfg["files_max_mb"] * MIB)
-            except flow_files.Refused as e:
-                self.link.send({"t": "files-skipped", "why": str(e)})  # said over there: that is where the user is now
+            except flow_files.Refused:
+                self.link.send({"t": "cue", "what": "failed"}, pair=pair)  # felt over there: that is where the hand is now
                 return
             if not items:
                 return
-            self._offered_mark = mark  # the other computer has them only once they have all arrived
-            self.link.offer_files(items, sources)
+            self._offered[pair] = mark  # that computer has them only once they have all arrived
+            self.link.offer_files(items, sources, pair)
             return
-        elif content["image"]:
+        token = secrets.token_hex(4)  # comes back when it has arrived: only then does that computer count as having it
+        if content["image"]:
             if not cfg["clipboard"]:
                 return
-            self.link.send({"t": "clipboard", "mime": clipboard.PNG}, content["image"])
+            self.link.send({"t": "clipboard", "mime": clipboard.PNG, "token": token}, content["image"], pair=pair)
         elif content["text"] and cfg["clipboard"] and len(content["text"].encode("utf-8")) <= flow.MAX_CLIPBOARD:
-            self.link.send({"t": "clipboard", "text": content["text"]})
+            self.link.send({"t": "clipboard", "text": content["text"], "token": token}, pair=pair)
         else:
             return
-        self._shared = mark
+        self._unconfirmed[pair] = (token, mark)
 
-    def _on_link(self, kind, payload):
+    def _send_again(self, pair):
+        """The link to that computer is back: if the mouse went there a moment ago and what was copied
+        did not get through, send it now."""
+        crossed, when = self._crossed
+        if crossed == pair and time.monotonic() - when < RESEND_FOR and not self.store.state["connected"]:
+            self._send_clipboard(pair)
+
+    def _cue(self, what, pair):
+        """Let the hand feel that copied files have arrived ("arrived") or could not be brought over
+        ("failed"): on the mouse if it is here, or else on the computer of ``pair``, where it has gone."""
+        waveform = self.store.cfg["flow"]["cue_arrived" if what == "arrived" else "cue_failed"]
+        if self.store.state["connected"]:
+            if waveform is not None:
+                self.store.engine.play_haptic(waveform)
+        elif pair:
+            self.link.send({"t": "cue", "what": what}, pair=pair)
+
+    def _on_link(self, kind, payload, pair):
         if kind in ("up", "status"):
-            link_id = payload.get("id") if kind == "up" else (self._peer or {}).get("id")
-            self._peer = dict({key: payload.get(key) for key in ("name", "channel", "present", "edge", "edge_at")}, id=link_id)
+            before = self._peers.get(pair) or {}
+            link_id = payload.get("id") if kind == "up" else before.get("id")
+            self._peers[pair] = dict({key: payload.get(key) for key in ("name", "channel", "present", "edge", "edge_at")},
+                                     id=link_id, quiet=bool(before.get("quiet")) and kind == "status")
+            channel = payload.get("channel")
+            if isinstance(channel, int) and not isinstance(channel, bool) and channel >= 0:
+                self._channels[pair] = channel
             if kind == "up":
-                self._shared = None
+                self._shared.pop(pair, None)
+                self._unconfirmed.pop(pair, None)
                 name = str(payload.get("name") or "")[:64]
-                if name and name != self.store.cfg["flow"]["peer_name"]:
-                    self.store.set("flow", "peer_name", name)
-            self._agree_on_edges()
+                entry = self._entry(pair)
+                if entry is not None and name and name != entry["name"]:
+                    self._change(pair, name=name)
+            self._agree_on_edges(pair)
+            if kind == "up":
+                self._send_again(pair)
+        elif kind == "quiet":
+            if pair in self._peers:
+                self._peers[pair]["quiet"] = bool(payload)
+            if payload and self._armed == pair:
+                self._disarm()
         elif kind == "down":
-            self._peer = None
-            self._disarm()
+            self._peers.pop(pair, None)
+            if self._armed == pair:
+                self._disarm()
         elif kind == "problem":
             self._problem = payload
         elif kind == "message":
             if self._on():
-                self._on_message(payload)
+                self._on_message(payload, pair)
             return
         elif kind == "files-coming":
-            self._files_coming(payload)
+            self._progress(dict(payload, done=0), pair, sending=False)  # the clipboard here stays as it is until they are in
         elif kind == "files-progress":
-            self._progress(payload)
+            self._progress(payload, pair)
         elif kind == "files":
             self._transfer = None
-            self._files_arrived(payload)
+            if self.clipboard.write(files=payload["paths"]):
+                self._shared[pair] = self.clipboard.signature(files=payload["paths"])
+            self._cue("arrived", pair)
         elif kind == "files-declined":
             self._transfer = None
             if payload != "cancelled":
-                self._not_brought(payload)
+                self._cue("failed", pair)
         elif kind == "files-sent":
             self._transfer = None
-            self._shared, self._offered_mark = self._offered_mark, None
+            if pair in self._offered:
+                self._shared[pair] = self._offered.pop(pair)
         elif kind == "files-refused":
             self._transfer = None
-            self._offered_mark = None
+            self._offered.pop(pair, None)
         elif kind == "offer":
             known = payload["id"] in self._offers
             self._offers[payload["id"]] = dict(payload, seen=time.monotonic())
@@ -504,37 +613,53 @@ class FlowService(QObject):
             return
         self.changed.emit()
 
-    def _agree_on_edges(self):
-        """If the other computer names an edge that does not face this one's, one of the two gives way."""
-        cfg, peer = self.store.cfg["flow"], self._peer
+    def _agree_on_edges(self, pair):
+        """If that computer names an edge that does not face the one it stands behind here, one of the two gives way."""
+        entry, peer = self._entry(pair), self._peers.get(pair)
+        if entry is None or peer is None:
+            return
         chosen = peer.get("edge_at")
         chosen = min(float(chosen), time.time() + 60.0) if isinstance(chosen, (int, float)) and not isinstance(chosen, bool) else 0.0
-        edge = flow.edge_to_adopt((cfg["edge"], cfg["edge_at"], self.link.id), (peer.get("edge"), chosen, str(peer.get("id") or "")))
-        if edge is not None:
-            log.info("flow: the other computer is on the %s now", edge)
-            self._adopting = True
-            try:
-                self.store.set("flow", "edge_at", chosen)
-                self.store.set("flow", "edge", edge)
-            finally:
-                self._adopting = False
+        edge = flow.edge_to_adopt((entry["edge"], entry["edge_at"], self.link.id), (peer.get("edge"), chosen, str(peer.get("id") or "")))
+        if edge is None:
+            return
+        log.info("flow: %s is on the %s now", self._name(pair) or "the other computer", edge)
+        peers = copy.deepcopy(self.store.cfg["flow"]["peers"])
+        for other in peers:
+            if flow.pair_id(other["key"]) == pair:
+                other["edge"], other["edge_at"] = edge, chosen
+            elif other["edge"] == edge:  # the one that stood there takes the place that came free, and its computer follows
+                other["edge"], other["edge_at"] = entry["edge"], time.time()
+        self._adopting = True
+        try:
+            self.store.set("flow", "peers", peers)
+        finally:
+            self._adopting = False
 
     def _paired(self, result):
-        """A pairing by code worked: keep the key and the way to the other computer, and switch Flow on."""
+        """A pairing by code worked: keep the key and the way to that computer, and switch Flow on."""
         self._pairing = None
         self._offers = {}
-        port = result.get("port")
-        address = result["address"]
+        cfg = copy.deepcopy(self.store.cfg["flow"])
+        port, address, name = result.get("port"), result["address"], result.get("name") or ""
         if ":" in address:
             address = f"[{address}]"
-        if isinstance(port, int) and not isinstance(port, bool) and 0 < port < 65536 and port != self.store.cfg["flow"]["port"]:
+        if isinstance(port, int) and not isinstance(port, bool) and 0 < port < 65536 and port != cfg["port"]:
             address = f"{address}:{port}"
-        cfg = dict(self.store.cfg["flow"], enabled=True, key=result["key"], peer=address, peer_name=result.get("name") or "")
-        # Where the two stand is taken from the computer that showed the code; the other one follows when they connect.
-        cfg["edge_at"] = time.time() if result.get("host") else 0.0
+        their_id = str(result.get("id") or "")[:64]
+        peers = [entry for entry in cfg["peers"] if not (their_id and entry["id"] == their_id)]  # paired anew: the old key goes
+        peers = peers[-(flow.MAX_PEERS - 1):] if flow.MAX_PEERS > 1 else []  # no room for more: the oldest pairing goes
+        taken = {entry["edge"] for entry in peers}
+        peers.append({
+            "key": result["key"], "id": their_id, "address": address, "name": name,
+            "edge": next(side for side in ("right", "left", "top", "bottom") if side not in taken),
+            # Where the two stand is taken from the computer that showed the code; the other one follows when they connect.
+            "edge_at": time.time() if result.get("host") else 0.0,
+        })
+        cfg.update(enabled=True, peers=peers)
         self.store.set_section("flow", cfg)
 
-    def _on_message(self, message):
+    def _on_message(self, message, pair):
         kind = message.get("t")
         cfg = self.store.cfg["flow"]
         if kind == "enter":
@@ -551,42 +676,28 @@ class FlowService(QObject):
         elif kind == "clipboard" and cfg["clipboard"]:
             text, image = message.get("text"), message.get("data")
             if message.get("mime") == clipboard.PNG and isinstance(image, bytes) and image:
-                if self.clipboard.write(image=image):
-                    self._shared = self.clipboard.signature(image=image)
+                mark = self.clipboard.signature(image=image)
+                written = mark == self._shared.get(pair) or self.clipboard.write(image=image)  # twice the same: once is enough
             elif isinstance(text, str) and text and len(text.encode("utf-8")) <= flow.MAX_CLIPBOARD:
-                if self.clipboard.write(text=text):
-                    self._shared = self.clipboard.signature(text=text)
-        elif kind == "files-skipped":
-            self._not_brought(str(message.get("why") or ""))
-
-    def _files_coming(self, coming):
-        """Copied files have started to arrive. Until they are here, pasting must not bring up whatever was
-        copied on this computer before: a note takes its place (an empty clipboard would be refilled by the
-        desktop with the previous entry)."""
-        name = (self._peer or {}).get("name") or self.store.cfg["flow"]["peer_name"] or _("the other computer")
-        note = _("MX Options is bringing {count} file(s) ({size}) over from {name}. Paste again when they have arrived.").format(
-            count=coming["count"], size=flow_files.human(coming["total"]), name=name)
-        if self.clipboard.write(text=note):
-            self._shared = self.clipboard.signature(text=note)  # nothing to carry back if the pointer crosses again
-        self._progress(dict(coming, done=0), sending=False)
-        if coming["total"] >= ANNOUNCE_FROM:
-            self.notify("coming", dict(coming, name=name))
-
-    def _files_arrived(self, arrived):
-        if not self.clipboard.write(files=arrived["paths"]):
-            return
-        self._shared = self.clipboard.signature(files=arrived["paths"])
-        name = (self._peer or {}).get("name") or self.store.cfg["flow"]["peer_name"]
-        self.notify("files", {"count": arrived["count"], "name": name})
-
-    def _not_brought(self, why):
-        name = (self._peer or {}).get("name") or self.store.cfg["flow"]["peer_name"]
-        self.notify("skipped", {"why": why, "name": name, "limit": self.store.cfg["flow"]["files_max_mb"]})
+                mark = self.clipboard.signature(text=text)
+                written = mark == self._shared.get(pair) or self.clipboard.write(text=text)
+            else:
+                return
+            if written:
+                self._shared[pair] = mark
+                self.link.send({"t": "clipboard-ok", "token": message.get("token")}, pair=pair)
+        elif kind == "clipboard-ok":
+            token, mark = self._unconfirmed.get(pair, (None, None))
+            if token is not None and message.get("token") == token:
+                del self._unconfirmed[pair]
+                self._shared[pair] = mark
+        elif kind == "cue" and message.get("what") in ("arrived", "failed"):
+            self._cue(message["what"], None)  # the mouse is here, if anywhere: play it, do not pass it on again
 
     def close(self):
         self._tick.stop()
         self._disarm()
-        self._watch_edge(None)
+        self._watch_edges(frozenset())
         self.link.stop()
         if self._pointer is not None:
             self._pointer.close()

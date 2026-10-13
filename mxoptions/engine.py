@@ -13,7 +13,7 @@ import struct
 import threading
 import time
 
-from . import config, device, gestures, hidpp, vinput
+from . import config, device, gestures, hidpp, rumble, vinput
 from .actions import Executor, keys
 from .hidpp import HidppClosed, HidppError, HidppFeatureError
 
@@ -44,8 +44,11 @@ PUSH_PAUSE = 0.30    # s without pushing after which the push against the edge s
 PUSH_DWELL = 0.25    # where the mouse's movement cannot be followed, the pointer has to rest against the edge
 PUSH_DWELL_PER_MM = 0.03  # ... this long, plus this much for every millimetre of push asked for
 EDGE_AXES = {"left": (-1, 0), "right": (1, 0), "top": (0, -1), "bottom": (0, 1)}  # in the mouse's counts, down is positive
+# Rumble from games (rumble.py): below the first strength it is "light", below the second "medium", else "strong".
+RUMBLE_STEPS = ((0.34, "light"), (0.67, "medium"), (float("inf"), "strong"))
+RUMBLE_TEST = ((0.0, 0.2), (0.45, 0.5), (0.9, 1.0), (1.5, 0.0))  # the test: (s from its start, strength)
 EXPECT_FOR = 12.0    # s the mouse is looked for more often after the other computer sent it here
-EXPECT_INTERVAL = 0.4
+EXPECT_INTERVAL = 0.1
 HID_BUTTONS = ("left", "right", "middle", "back", "forward")  # bit order of the receiver's mouse report
 
 # thumb wheel function -> (wheel clicks per step, action forward, action backward)
@@ -132,7 +135,11 @@ class Engine:
         self._hid_buttons = 0
         self._reported = frozenset()
         self._expect_until = 0.0   # the other computer is sending the mouse over: look for it more often
+        self._known_direct = None  # the mouse as last loaded over Bluetooth or a cable (see _scan)
         self._push = None          # Flow: the pointer rests against the edge that leads to the other computer
+        self._rumble_pad = None    # the virtual gamepad games vibrate, while rumble is switched on
+        self._rumble_mark = None
+        self._rumble = {"level": 0.0, "next": 0.0}  # the strength a game asks for now, and when the next pulse is due
 
     # -- thread-safe API --------------------------------------------------
 
@@ -193,6 +200,19 @@ class Engine:
         The outcome comes back as a "flow" event."""
         self._queue.put(("flow", int(channel), bool(by_edge)))
 
+    def rumble_test(self):
+        """Play on the mouse what a game's rumble growing from weak to strong feels like."""
+        def run():
+            start = time.monotonic()
+            for after, level in RUMBLE_TEST:
+                time.sleep(max(0.0, start + after - time.monotonic()))
+                self._queue.put(("rumble", "test", level))
+        threading.Thread(target=run, name="rumble-test", daemon=True).start()
+
+    def rumble_nudge(self):
+        """Move a stick of the virtual gamepad for a moment, so that a browser or a game notices it."""
+        self._queue.put(("rumble_nudge",))
+
     def flow_arm(self, channel, edge, push_mm):
         """Flow: the pointer has come to rest against ``edge``, behind which the computer on Easy-Switch
         ``channel`` is. Send the mouse there once it has been pushed ``push_mm`` millimetres further."""
@@ -237,6 +257,8 @@ class Engine:
             return max(0.05, self._next_ping - now)
         if self._spin["free"]:  # wake up in time to notice the wheel stopping
             return max(0.005, self._spin["last"] + SPIN_STOP - now)
+        if self._rumble["level"] > 0:  # in time for the next pulse
+            return max(0.005, self._rumble["next"] - now)
         if self._push is not None and self._push["deadline"] is not None:
             return max(0.005, self._push["deadline"] - now)
         return max(0.05, min(30.0, self._next_battery - now))
@@ -276,6 +298,12 @@ class Engine:
             self._gesture_dry = item[1]
         elif kind == "flow":
             self._flow_leave(item[1], item[2])
+        elif kind == "rumble_nudge":
+            if self._rumble_pad is not None:
+                self._rumble_pad.nudge()
+        elif kind == "rumble":
+            if item[1] == "test" or (item[1] is not None and item[1] is self._rumble_mark):
+                self._rumble_level(item[2])
         elif kind == "flow_arm":
             self._flow_arm(item[1])
         elif kind == "hid_motion":
@@ -317,6 +345,8 @@ class Engine:
             brief = (self._spin["last"] - self._spin["since"] < SPIN_SHORT
                      and self.cfg["wheel_click"]["moments"] == "both")
             self._wheel_changed("ratchet", "it stopped at once" if brief else "it stopped", quiet=brief)
+        if self._rumble["level"] > 0 and now >= self._rumble["next"]:
+            self._rumble_pulse(now)
         push = self._push
         if push is not None and push["deadline"] is not None and now >= push["deadline"]:
             self._flow_arm(None)
@@ -346,11 +376,16 @@ class Engine:
                 transport.on_notification = self._post_note(transport)
                 self._transports[path] = transport
             try:
-                mouse = device.find_mouse(transport)
+                # A mouse on Bluetooth comes back as a new device every time it returns from another computer:
+                # what it told about itself last time is still true.
+                mouse = device.find_mouse(transport, None if is_receiver else self._known_direct,
+                                          hurry=time.monotonic() < self._expect_until)
             except HidppClosed:
                 continue
             if mouse:
                 log.info("found %s on %s slot %s", mouse.name, path, mouse.devidx)
+                if not is_receiver:
+                    self._known_direct = mouse
                 self.mouse = mouse
                 self._configure()
                 return
@@ -370,7 +405,40 @@ class Engine:
                 self._reset_input_state()
                 self._next_ping = time.monotonic() + OFFLINE_PING_INTERVAL
             self._sync_watcher()
+            self._sync_rumble()
             self._publish()
+
+    def _sync_rumble(self):
+        """Have the virtual gamepad exactly while rumble is switched on and there is a mouse to play it on."""
+        wanted = bool(self.cfg["rumble"]["enabled"] and self.mouse is not None and self.online and self.mouse.haptic_waveforms)
+        if wanted and self._rumble_pad is None:
+            mark = self._rumble_mark = object()  # what this pad's reports carry, so that a closed pad's are ignored
+            self._rumble_pad = rumble.create(lambda level: self._queue.put(("rumble", mark, level)))
+            if self._rumble_pad is not None:
+                log.info("rumble: the virtual gamepad is there for games to vibrate")
+        elif not wanted and self._rumble_pad is not None:
+            pad, self._rumble_pad, self._rumble_mark = self._rumble_pad, None, None
+            pad.close()
+            self._rumble["level"] = 0.0
+
+    def _rumble_level(self, level):
+        """A game asks for this much rumble from now on (0: none)."""
+        before = self._rumble["level"]
+        self._rumble["level"] = min(1.0, max(0.0, level) * self.cfg["rumble"]["gain"])
+        if bool(before) != bool(self._rumble["level"]):  # worth a line: it tells whether a game sends any rumble at all
+            log.info("rumble: %s", "a game started vibrating" if self._rumble["level"] else "stopped")
+        now = time.monotonic()
+        if self._rumble["level"] > 0 and now >= self._rumble["next"]:
+            self._rumble_pulse(now)
+
+    def _rumble_pulse(self, now):
+        """One beat of a rumble that lasts: the motor plays patterns, not a hum, so a rumble is a row of them."""
+        level = self._rumble["level"]
+        name = next(name for limit, name in RUMBLE_STEPS if level < limit)
+        waveform = self.cfg["rumble"][name]
+        if waveform is not None:
+            self._play(waveform, wait=False)  # the next pulse and the game's next word are not kept waiting
+        self._rumble["next"] = now + self.cfg["rumble"]["interval"] / 1000.0
 
     def _spin_wanted(self):
         """Whether anyone cares when SmartShift lets the wheel go: the click, or other programs."""
@@ -424,6 +492,7 @@ class Engine:
         self._spin["events"].clear()
         self._dpi_shift = False
         self._flow_arm(None)
+        self._rumble["level"] = 0.0
         if self._ring_cid is not None:
             self._ring_cid = None
             self.listener.on_ring("cancel")
@@ -451,6 +520,7 @@ class Engine:
             self._dpi_override = None  # the user moved the slider: that wins
         self.cfg = cfg
         self._sync_watcher()  # the click or the API may have been switched on or off
+        self._sync_rumble()
         if self.mouse and self.online and changed:
             self._apply(changed)
 
@@ -620,6 +690,9 @@ class Engine:
         if self._watcher is not None:
             self._watcher.close()
             self._watcher = None
+        if self._rumble_pad is not None:
+            self._rumble_pad.close()
+            self._rumble_pad = None
         for transport in list(self._transports.values()):
             transport.close()
         self._transports.clear()
@@ -634,10 +707,10 @@ class Engine:
         haptics = self.cfg["haptics"]
         return haptics["enabled"] and haptics["feedback"]
 
-    def _play(self, waveform):
+    def _play(self, waveform, wait=True):
         if self.mouse and self.online and self.mouse.haptic_waveforms:
             try:
-                self.mouse.play_haptic(waveform)
+                self.mouse.play_haptic(waveform, wait)
             except HidppClosed:
                 raise
             except HidppError as e:
@@ -784,6 +857,9 @@ class Engine:
         elif feature == device.UNIFIED_BATTERY and event == 0:
             self._battery = (data[0], data[2])
             self._publish()
+        elif feature == device.BATTERY_STATUS and event == 0:
+            self._battery = device.battery_status(data)
+            self._publish()
         elif feature == device.WIRELESS_DEVICE_STATUS and event == 0 and data[1] == 1:
             self._configure()  # power-cycled: volatile settings are gone
 
@@ -821,6 +897,7 @@ class Engine:
             self._gesture = {"cid": cid, "action": action, "x": 0, "y": 0, "path": 0, "events": 0, "fired": [],
                              "axis": None, "done": False, "since": time.monotonic(), "skip": cid in self._raw_fresh,
                              "armed": False, "pointing": None, "cued": 0.0,
+                             "shapes": bool(action.get("shapes")),  # the button has shapes to draw: judge on release
                              "total": [0, 0], "trace": [(0.0, 0.0)], "shown": 0.0}
             self._raw_fresh.discard(cid)
             self._show_gesture(self._gesture)
@@ -855,6 +932,23 @@ class Engine:
             return gesture["fired"][-1] if len(gesture["fired"]) == 1 else "repeat"
         settings = self.cfg["gestures"]
         minimum = settings["min_mm"] * self._counts_per_mm()
+        if gesture["shapes"]:
+            drawn = gestures.strokes(gesture["trace"], settings["shape_mm"])
+            if len(drawn) >= 2:  # it changed direction on the way: a shape, not a swipe
+                name = gestures.shape(drawn)
+                action = gesture["action"]["shapes"].get(name) if name else None
+                if action is None:
+                    log.info("gesture: shape %s (%s) has no action", name or "unknown", drawn)
+                    self._gesture_cue("reject")
+                    return "unknown"
+                gesture["fired"].append(name)
+                log.info("gesture: shape %s (%s, %d reports, %.2f s)", name, drawn, gesture["events"],
+                         time.monotonic() - gesture["since"])
+                self._gesture_cue("swipe")
+                self._emit("gesture", name)
+                if not self._gesture_dry:
+                    self.executor.trigger(action)
+                return name
         if math.hypot(gesture["x"], gesture["y"]) >= minimum:
             direction = gestures.direction(gesture["x"], gesture["y"], settings["dead"], settings["bias"])
             if direction is None:
@@ -929,7 +1023,8 @@ class Engine:
                     gesture["cued"] = now
                     self._gesture_cue("turn")
                 gesture["pointing"] = pointing
-        if settings["trigger"] != "release":
+        # A button that has shapes waits for the whole movement, or a shape would fire as a swipe half-way.
+        if settings["trigger"] == "repeat" or (settings["trigger"] == "auto" and not gesture["shapes"]):
             if gesture["axis"] is None:
                 # never on the strength of a single report: one alone says too little about the hand
                 if gesture["events"] >= 2 and math.hypot(gesture["x"], gesture["y"]) >= settings["far_mm"] * per_mm:

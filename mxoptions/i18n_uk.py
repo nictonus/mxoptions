@@ -187,6 +187,32 @@ STRINGS = {
     "How hard you have to press the thumb panel.": "Наскільки сильно треба тиснути на панель.",
     "Light": "Легко",
     "Try a pattern": "Спробуйте візерунок",
+    "Game rumble": "Вібрація з ігор",
+    "Games vibrate game controllers, not mice. With this on, MX Options adds a virtual gamepad to the system; what a "
+    "game sends to it is played on the mouse. A game then sees a controller: some show gamepad prompts because of "
+    "it, and some only vibrate a controller that is being played with. Switch it off if a game misbehaves.":
+        "Ігри вібрують геймпадами, а не мишами. Якщо це ввімкнено, MX Options додає в систему віртуальний геймпад; "
+        "те, що гра надсилає йому, відтворюється на миші. Гра при цьому бачить контролер: деякі через це показують "
+        "підказки для геймпада, а деякі вібрують лише тим контролером, яким грають. Вимкніть, якщо гра поводиться дивно.",
+    "Vibrate with games": "Вібрувати разом з іграми",
+    "Weak rumble": "Слабка вібрація",
+    "Medium rumble": "Середня вібрація",
+    "Strong rumble": "Сильна вібрація",
+    "Pulse every": "Імпульс кожні",
+    "{:.0f} ms": "{:.0f} мс",
+    "The motor plays short patterns, not a hum: a rumble that lasts is a row of them, this far apart.":
+        "Мотор відтворює короткі візерунки, а не гудіння: тривала вібрація — це їхня низка з таким проміжком.",
+    "Sensitivity": "Чутливість",
+    "Higher, and a weaker rumble from the game already counts as medium or strong.":
+        "Що вище, то слабша вібрація з гри вже вважається середньою чи сильною.",
+    "Make it noticed": "Щоб геймпад помітили",
+    "Move its stick": "Ворухнути стіком",
+    "A gamepad tester in a browser, and some games, take no notice of a controller until something on it moves. This "
+    "moves the virtual gamepad's left stick for a moment. Press it while the tester or the game is open.":
+        "Тестер геймпадів у браузері та деякі ігри не помічають контролер, доки на ньому щось не ворухнеться. Ця "
+        "кнопка на мить відхиляє лівий стік віртуального геймпада. Натискайте, коли тестер чи гра відкриті.",
+    "A rumble that grows from weak to strong, as a game would send it.":
+        "Вібрація, що наростає від слабкої до сильної, як її надіслала б гра.",
     "This mouse has no haptic motor.": "У цієї миші немає вібромотора.",
     "Sharp state change": "Різка зміна стану",
     "Damp state change": "М'яка зміна стану",
@@ -383,14 +409,38 @@ STRINGS = {
         "Це коліщатко крутиться плавно, тому кожен крок гучності, вкладок, стільниць, яскравості чи масштабу дає короткий тик.",
 
     # firmware
+    # shapes drawn with a gesture button
+    "Shapes": "Фігури",
+    "{} with an action": "з дією: {}",
+    "None yet": "Поки жодної",
+    "No action": "Без дії",
+    "Hold the button and draw: a corner, there and back, a circle, a shake. A shape that has an action here runs it "
+    "when the button comes up. While any shape has one, plain swipes of this button are also judged when it comes up, "
+    "not half-way; with repeating swipes shapes are not read at all.":
+        "Затисніть кнопку й намалюйте: кут, туди й назад, коло, струс. Фігура, якій тут призначено дію, виконує її, "
+        "коли кнопку відпущено. Поки хоч одна фігура має дію, звичайні жести цієї кнопки теж оцінюються після "
+        "відпускання, а не на півдорозі; з повторюваними жестами фігури не читаються взагалі.",
+    "Down, then right": "Униз, потім праворуч",
+    "Down, then left": "Униз, потім ліворуч",
+    "Up, then right": "Угору, потім праворуч",
+    "Up, then left": "Угору, потім ліворуч",
+    "Right, then down": "Праворуч, потім униз",
+    "Right, then up": "Праворуч, потім угору",
+    "Left, then down": "Ліворуч, потім униз",
+    "Left, then up": "Ліворуч, потім угору",
+    "Up and back": "Угору й назад",
+    "Down and back": "Униз і назад",
+    "Left and back": "Ліворуч і назад",
+    "Right and back": "Праворуч і назад",
+    "Circle, clockwise": "Коло за годинниковою",
+    "Circle, anticlockwise": "Коло проти годинникової",
+    "Shake sideways": "Струс убік",
+    "Shake up and down": "Струс угору-вниз",
+    "Shape: {}": "Фігура: {}",
+    "A shape with no action": "Фігура без дії",
+
     # Flow
     "Flow": "Flow",
-    "One mouse on two computers. Push the pointer past the edge of the screen and the mouse moves on to the other "
-    "computer, together with what you copied: text, pictures and files. Both computers run MX Options, are on the "
-    "same network and are paired with the mouse on different Easy-Switch channels.":
-        "Одна миша на два комп'ютери. Проведіть вказівник за край екрана — і миша перейде на інший комп'ютер разом "
-        "зі скопійованим: текстом, зображеннями й файлами. На обох комп'ютерах працює MX Options, вони в одній мережі, "
-        "а миша спарена з ними на різних каналах Easy-Switch.",
     "Click a place next to this computer to put the other one there. It follows by itself.":
         "Клацніть місце поруч із цим комп'ютером, щоб поставити туди інший. Той підлаштується сам.",
     "This computer": "Цей комп'ютер",
@@ -400,6 +450,9 @@ STRINGS = {
     "Pair this computer with another one to begin.": "Щоб почати, спаруйте цей комп'ютер з іншим.",
     "Flow is off.": "Flow вимкнено.",
     "Cannot listen for the other computer: {}": "Не вдається чекати на інший комп'ютер: {}",
+    "{} is not answering right now: the network between the two stalls, or it is asleep. The mouse stays here until "
+    "it answers.":
+        "{} зараз не відповідає: мережа між ними підвисає або він спить. Миша лишається тут, доки він не відповість.",
     "Looking for {}…": "Шукаю зв'язок з {}…",
     "Connected to {}. It has not seen the mouse yet: switch the mouse to it once with the Easy-Switch button, and it "
     "will know its channel from then on.":
@@ -420,17 +473,34 @@ STRINGS = {
     "Connected to {}. Push the pointer past the lit edge to cross.":
         "З'єднано з {}. Щоб перейти, проведіть вказівник за підсвічений край.",
 
-    "Pairing": "Спарювання",
+    "One mouse on two or three computers. Push the pointer past the edge of the screen and the mouse moves on to the "
+    "computer behind it, together with what you copied: text, pictures and files. Every computer runs MX Options, "
+    "they are on the same network, and the mouse is paired with each on an Easy-Switch channel of its own.":
+        "Одна миша на два чи три комп'ютери. Проведіть вказівник за край екрана — і миша перейде на комп'ютер, що "
+        "стоїть за ним, разом зі скопійованим: текстом, зображеннями й файлами. На кожному комп'ютері працює MX "
+        "Options, вони в одній мережі, а миша спарена з кожним на своєму каналі Easy-Switch.",
+    "Click one of the other computers, then the place next to this one where it stands.":
+        "Клацніть один з інших комп'ютерів, а потім місце біля цього, де він стоїть.",
     "One computer shows a six-digit code, you type it on the other, and the two agree on a key that everything "
-    "between them is encrypted with. The code itself is never sent, and three wrong tries withdraw it.":
+    "between them is encrypted with. The code itself is never sent, and three wrong tries withdraw it. A computer "
+    "can be paired with two others, one on each side.":
         "Один комп'ютер показує шестизначний код, ви вводите його на іншому, і вони домовляються про ключ, яким "
-        "шифрується все між ними. Сам код мережею не передається, а після трьох хибних спроб він скасовується.",
+        "шифрується все між ними. Сам код мережею не передається, а після трьох хибних спроб він скасовується. "
+        "Комп'ютер можна спарувати з двома іншими, по одному з кожного боку.",
+    "Forget {}? To use Flow with it again the two have to be paired anew.":
+        "Забути {}? Щоб знову користуватись Flow із ним, їх доведеться спарувати наново.",
+    "Copy them in the file manager, cross, and paste. They are sent over when you cross and wait on the other computer "
+    "for a day. Until they have all arrived, the clipboard there stays as it was.":
+        "Скопіюйте їх у файловому менеджері, перейдіть і вставте. Вони надсилаються під час переходу й чекають на "
+        "іншому комп'ютері добу. Поки всі не дійшли, буфер обміну там лишається яким був.",
+    "Vibration when the files have arrived": "Вібрація, коли файли дійшли",
+    "Vibration when they could not be brought over": "Вібрація, коли їх не вдалося перенести",
+    "Address of {}": "Адреса {}",
+    "Pairing": "Спарювання",
     "Paired with {}": "Спаровано з {}",
     "Connected, everything between the two is encrypted.": "З'єднано, усе між ними зашифровано.",
     "Not connected right now.": "Зараз не з'єднано.",
     "Forget": "Забути",
-    "Forget the other computer? To use Flow again the two have to be paired anew.":
-        "Забути інший комп'ютер? Щоб знову користуватись Flow, їх доведеться спарувати наново.",
     "Pair with another computer": "Спарувати з іншим комп'ютером",
     "Press this on one of the two computers. On the other, open this page: it finds this computer by itself and asks "
     "for the code.":
@@ -473,10 +543,6 @@ STRINGS = {
     "What you copied on one computer can be pasted on the other after crossing.":
         "Скопійоване на одному комп'ютері можна вставити на іншому після переходу.",
     "Copied files and folders": "Скопійовані файли й теки",
-    "Copy them in the file manager, cross, and paste. They are sent over when you cross and wait on the other computer "
-    "for a day.":
-        "Скопіюйте їх у файловому менеджері, перейдіть і вставте. Вони надсилаються під час переходу й чекають на "
-        "іншому комп'ютері добу.",
     "Only text can cross here: files and pictures need KDE's clipboard service (the Python bindings of KGuiAddons).":
         "Тут переходить лише текст: для файлів і зображень потрібна служба буфера обміну KDE (Python-прив'язки "
         "KGuiAddons).",
@@ -491,20 +557,6 @@ STRINGS = {
     "less than a minute left": "лишилось менше хвилини",
     "about {} min left": "лишилось близько {} хв",
     "about {hours} h {minutes} min left": "лишилось близько {hours} год {minutes} хв",
-    "MX Options is bringing {count} file(s) ({size}) over from {name}. Paste again when they have arrived.":
-        "MX Options переносить файли ({count}, {size}) з {name}. Вставте ще раз, коли вони прийдуть.",
-    "{count} file(s), {size}, are coming over from {name}. They can be pasted here once they have arrived; the Flow "
-    "page shows how far they are.":
-        "З {name} переносяться файли ({count}, {size}). Їх можна буде вставити тут, коли вони прийдуть; на сторінці "
-        "Flow видно, скільки вже є.",
-    "Copied on {name}: {count} file(s) are on the clipboard here. Paste them where you want them.":
-        "Скопійоване на {name} (файлів: {count}) уже в буфері обміну тут. Вставте, куди треба.",
-    "The files copied on {name} are larger than the {limit} MB set for Flow, so they were not brought over.":
-        "Файли, скопійовані на {name}, більші за {limit} МБ, задані для Flow, тому їх не перенесено.",
-    "Too many files were copied on {name} to bring them over.": "На {name} скопійовано забагато файлів, щоб їх переносити.",
-    "There is not enough room on this disk for the files copied on {name}.":
-        "На цьому диску бракує місця для файлів, скопійованих на {name}.",
-    "The files copied on {name} could not be brought over.": "Файли, скопійовані на {name}, не вдалося перенести.",
 
     "Setting it up by hand": "Налаштування вручну",
     "For networks where the computers cannot find each other: give one of them the other's address, and both the same "
@@ -540,6 +592,15 @@ STRINGS = {
         "для Linux. Сама MX Options нічого не прошиває.",
 
     # integrations
+    "Tray icon": "Іконка в треї",
+    "The plain ones take the colour of your panel. They turn faint while no mouse is connected and get a red mark "
+    "when its battery is low; “Battery level” fills up with the charge.":
+        "Прості беруть колір вашої панелі. Вони бліднуть, коли миша не підключена, і отримують червону позначку, "
+        "коли заряд низький; «Рівень заряду» заповнюється разом із батареєю.",
+    "Solid": "Заливка",
+    "MX Master": "MX Master",
+    "Battery level": "Рівень заряду",
+    "App icon": "Іконка програми",
     "Integrations": "Інтеграції",
     "Let other programs use the mouse": "Дозволити іншим програмам користуватися мишею",
     "Scripts and apps can play vibrations, run actions, show their own ring, read and change settings "

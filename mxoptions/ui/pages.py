@@ -15,8 +15,9 @@ from .action_picker import ActionPicker
 from . import mouse_photo
 from .mouse_view import MouseView
 from . import theme
+from . import tray_icon
 from .widgets import (
-    Card, ElidedLabel, InfoButton, PatternRow, Row, Segmented, SliderRow, SwatchRow, Switch, hint_label, titled,
+    Card, ElidedLabel, IconChoice, InfoButton, PatternRow, Row, Segmented, SliderRow, SwatchRow, Switch, hint_label, titled,
 )
 
 BUTTON_TITLES = {
@@ -52,6 +53,8 @@ CLICK_SOUND_LABELS = [("tick", "Tick"), ("clack", "Clack"), ("relay", "Relay"), 
 CLICK_MOMENT_LABELS = [("both", "Letting go and stopping"), ("free", "Letting go"), ("ratchet", "Stopping")]
 MODEL_LABELS = [("photo", "Photo"), ("studio", "3D"), ("lowpoly", "Low-poly"), ("outline", "Outline"), ("wire", "Wireframe")]
 COLOR_LABELS = [("graphite", "Graphite"), ("pale-grey", "Pale grey"), ("black", "Black")]
+TRAY_LABELS = [("outline", "Outline"), ("solid", "Solid"), ("master", "MX Master"), ("battery", "Battery level"),
+               ("logo", "App icon")]
 
 
 def _header(title, about=None):
@@ -154,7 +157,9 @@ class ButtonsPage(QWidget):
 
     def _refresh(self):
         self.view.set_style(self.store.cfg["app"]["model"], self.store.cfg["app"]["mouse_color"])
-        self.photo_offer.setVisible(self.store.cfg["app"]["model"] == "photo" and not mouse_photo.available())
+        family = device.family(self.store.state.get("name") or "")
+        self.view.set_family(family)
+        self.photo_offer.setVisible(self.store.cfg["app"]["model"] == "photo" and not mouse_photo.available() and family == "mx4")
         self.photo_button.setEnabled(not self.photos.running)
         if self.photos.running:
             self.photo_text.setText(_("Downloading the pictures…"))
@@ -174,6 +179,7 @@ class ButtonsPage(QWidget):
         caps = state.get("caps")
         if caps:
             self.view.set_visible_keys(set(caps["buttons"]))
+            self._refresh()  # another mouse may need another picture
 
 
 class PointScrollPage(ScrollPage):
@@ -450,6 +456,45 @@ class HapticsPage(ScrollPage):
         self._pattern_ids = None
         self.body.addWidget(card)
 
+        card = Card(_("Game rumble"), hint=_(
+            "Games vibrate game controllers, not mice. With this on, MX Options adds a virtual gamepad to the system; "
+            "what a game sends to it is played on the mouse. A game then sees a controller: some show gamepad prompts "
+            "because of it, and some only vibrate a controller that is being played with. Switch it off if a game "
+            "misbehaves."
+        ))
+        self.rumble = Switch()
+        self.rumble.toggled.connect(lambda on: self.store.set("rumble", "enabled", on))
+        card.add(Row(_("Vibrate with games"), None, self.rumble))
+        self.rumble_rows = {}
+        for key, title in (("light", _("Weak rumble")), ("medium", _("Medium rumble")), ("strong", _("Strong rumble"))):
+            row = PatternRow(title)
+            row.changed.connect(lambda waveform, k=key: self.store.set("rumble", k, waveform))
+            row.played.connect(self.store.engine.play_haptic)
+            self.rumble_rows[key] = card.add(row)
+        self.rumble_interval = card.add(SliderRow(
+            _("Pulse every"), 60, 300, 10, _("{:.0f} ms"),
+            hint=_("The motor plays short patterns, not a hum: a rumble that lasts is a row of them, this far apart.")))
+        self.rumble_interval.changed.connect(lambda value: self.store.set("rumble", "interval", int(value)))
+        self.rumble_gain = card.add(SliderRow(
+            _("Sensitivity"), 50, 200, 10, "{:.0f}%",
+            hint=_("Higher, and a weaker rumble from the game already counts as medium or strong.")))
+        self.rumble_gain.changed.connect(lambda value: self.store.set("rumble", "gain", value / 100.0))
+        rumble_test = QPushButton(_("Play"))
+        rumble_test.setCursor(Qt.CursorShape.PointingHandCursor)
+        rumble_test.clicked.connect(lambda: self.store.engine.rumble_test())
+        self.rumble_test_row = card.add(Row(_("Try it"), _("A rumble that grows from weak to strong, as a game would send it."), rumble_test))
+        rumble_nudge = QPushButton(_("Move its stick"))
+        rumble_nudge.setCursor(Qt.CursorShape.PointingHandCursor)
+        rumble_nudge.clicked.connect(lambda: self.store.engine.rumble_nudge())
+        self.rumble_nudge_row = card.add(Row(
+            _("Make it noticed"),
+            _("A gamepad tester in a browser, and some games, take no notice of a controller until something on it "
+              "moves. This moves the virtual gamepad's left stick for a moment. Press it while the tester or the game "
+              "is open."),
+            rumble_nudge))
+        self.rumble_card = card
+        self.body.addWidget(card)
+
         self.missing = hint_label(_("This mouse has no haptic motor."))
         self.missing.hide()
         self.body.addWidget(self.missing)
@@ -480,6 +525,14 @@ class HapticsPage(ScrollPage):
         if self._force_range and haptics.get("force"):
             low, high = self._force_range
             self.force.set_value(round((haptics["force"] - low) * 100.0 / max(1, high - low)))
+        rumble = self.store.cfg["rumble"]
+        self.rumble.set_checked_silently(rumble["enabled"])
+        for key, row in self.rumble_rows.items():
+            row.set_value(rumble[key])
+        self.rumble_interval.set_value(rumble["interval"])
+        self.rumble_gain.set_value(round(rumble["gain"] * 100))
+        for widget in (*self.rumble_rows.values(), self.rumble_interval, self.rumble_gain, self.rumble_nudge_row):
+            widget.setEnabled(rumble["enabled"])
 
     def _state(self, state):
         caps = state.get("caps")
@@ -488,6 +541,9 @@ class HapticsPage(ScrollPage):
         has_haptics = bool(caps["waveforms"])
         self.feedback_card.setVisible(has_haptics)
         self.pattern_card.setVisible(has_haptics)
+        self.rumble_card.setVisible(has_haptics)
+        for row in self.rumble_rows.values():
+            row.set_waveforms(caps["waveforms"] or list(device.WAVEFORMS))
         self.missing.setVisible(not has_haptics and not caps["force"])
         self.force_card.setVisible(bool(caps["force"]))
         if caps["force"]:
@@ -591,6 +647,14 @@ class DevicePage(ScrollPage):
         self.mouse_color = Segmented([(key, _(label)) for key, label in COLOR_LABELS])
         self.mouse_color.selected.connect(lambda value: self.store.set("app", "mouse_color", value))
         self.mouse_color_row = card.add(Row(_("Mouse colour"), None, self.mouse_color))
+        self.tray = IconChoice()
+        self.tray.selected.connect(lambda value: self.store.set("app", "tray_icon", value))
+        self._tray_look = None
+        card.add(Row(
+            _("Tray icon"),
+            _("The plain ones take the colour of your panel. They turn faint while no mouse is connected and get a red "
+              "mark when its battery is low; “Battery level” fills up with the charge."),
+            self.tray))
         self.body.addWidget(card)
 
         card = Card(_("Application"))
@@ -725,6 +789,10 @@ class DevicePage(ScrollPage):
         self.model.set_value(app["model"])
         self.mouse_color.set_value(app["mouse_color"])
         self.mouse_color_row.setEnabled(app["model"] == "photo")
+        if self._tray_look != theme.REVISION:  # the little pictures are drawn in the colours of the theme
+            self._tray_look = theme.REVISION
+            self.tray.set_options([(value, _(label), tray_icon.preview(value, theme.TEXT)) for value, label in TRAY_LABELS])
+        self.tray.set_value(app["tray_icon"])
         self.api.set_checked_silently(app["api"])
         self.api_example_row.setEnabled(app["api"])
         self.language.set_value(app["language"])

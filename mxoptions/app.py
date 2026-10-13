@@ -119,8 +119,8 @@ def main(argv=None):
             time.sleep(0.2)
         log.warning("the service did not come up; running without it")
 
-    from . import api, flow_files, flow_service
-    from .ui import editors, ring, theme
+    from . import api, flow_service
+    from .ui import editors, ring, theme, tray_icon
     from .ui.main_window import MainWindow
     from .ui.ring import RingOverlay
     from .ui.sounds import WheelSounds
@@ -201,7 +201,22 @@ def main(argv=None):
 
     server.newConnection.connect(read_instance_message)
 
-    tray = QSystemTrayIcon(icon, app)
+    charging = (device.BATTERY_CHARGING, device.BATTERY_ALMOST_FULL, device.BATTERY_SLOW_CHARGE)
+    if tray_icon.install():  # its drawings go into the icon theme, where the panel finds them
+        tray_icon.announce()
+    shown = {"tray": None}
+
+    def tray_look():
+        """The tray icon in the chosen style, showing whether a mouse is there and how its battery is."""
+        style = store.cfg["app"]["tray_icon"]
+        key = (style, tray_icon.key_for(style, store.state, charging))
+        if key != shown["tray"]:
+            shown["tray"] = key
+            tray.setIcon(tray_icon.icon(style, store.state, charging))
+
+    tray = QSystemTrayIcon(app)
+    tray_look()
+    store.changed.connect(tray_look)
     menu = QMenu()
     menu.addAction(_("Open {}").format(APP_NAME), window.show_and_raise)
     menu.addSeparator()
@@ -212,29 +227,13 @@ def main(argv=None):
         lambda reason: (window.hide() if window.isVisible() and window.isActiveWindow() else window.show_and_raise())
         if reason == QSystemTrayIcon.ActivationReason.Trigger else None
     )
-    store.state_changed.connect(lambda state: tray.setToolTip(_tray_tooltip(state)))
 
-    def flow_note(kind, details):
-        name = details.get("name") or _("the other computer")
-        if kind == "coming":
-            text = _("{count} file(s), {size}, are coming over from {name}. They can be pasted here once they have arrived; "
-                     "the Flow page shows how far they are.").format(
-                         count=details["count"], size=flow_files.human(details["total"]), name=name)
-        elif kind == "files":
-            text = _("Copied on {name}: {count} file(s) are on the clipboard here. Paste them where you want them.").format(
-                name=name, count=details["count"])
-        elif details.get("why") == "too big":
-            text = _("The files copied on {name} are larger than the {limit} MB set for Flow, so they were not brought over.").format(
-                name=name, limit=details["limit"])
-        elif details.get("why") == "too many":
-            text = _("Too many files were copied on {name} to bring them over.").format(name=name)
-        elif details.get("why") == "no space":
-            text = _("There is not enough room on this disk for the files copied on {name}.").format(name=name)
-        else:
-            text = _("The files copied on {name} could not be brought over.").format(name=name)
-        tray.showMessage("Flow", text, icon, 8000)
+    def tray_state(state):
+        tray.setToolTip(_tray_tooltip(state))
+        tray_look()
 
-    store.flow.notify = flow_note
+    store.state_changed.connect(tray_state)
+
     tray_wait = QTimer(app)  # at login the service may be up before the panel that hosts the tray
     tray_wait.setInterval(2000)
 

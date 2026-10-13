@@ -74,7 +74,7 @@ def make_engine(**sections):
     made._next_battery = float("inf")
     made._publish = lambda: None
     played = []
-    made._play = lambda waveform: played.append(device.WAVEFORMS[waveform])
+    made._play = lambda waveform, wait=True: played.append(device.WAVEFORMS[waveform])
     return made, played
 
 

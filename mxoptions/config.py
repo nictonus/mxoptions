@@ -175,6 +175,7 @@ RING_PRESETS = [
         "clipboard", "terminal", "files", "lock", "calculator", "krunner", "night_light")),
 ]
 MODEL_STYLES = ("photo", "studio", "lowpoly", "outline", "wire")
+TRAY_ICONS = ("outline", "solid", "master", "battery", "logo")  # see ui/tray_icon.py
 MOUSE_COLORS = ("graphite", "pale-grey", "black")
 GESTURE_BUTTONS = ("gesture", "panel")  # the two thumb buttons whose roles can be swapped
 RING_STYLES = ("bubbles", "pie", "grid")
@@ -216,6 +217,15 @@ DEFAULTS = {
         "length": 1.0,        # how long they ring, 0.5 .. 2.5
     },
     "haptics": {"enabled": True, "level": 60, "force": None, "feedback": True},
+    # Rumble from games, played on the mouse (see rumble.py)
+    "rumble": {
+        "enabled": False,     # adds a virtual gamepad that games can vibrate
+        "light": 0x1B,        # the pattern for a weak rumble, a medium and a strong one (None: no vibration)
+        "medium": 0x04,
+        "strong": 0x02,
+        "interval": 110,      # ms between two pulses for as long as a rumble lasts
+        "gain": 1.0,          # how strongly a game's rumble is taken: 0.5 (it takes more to feel it) .. 2.0
+    },
     "ring": {"size": 1.0, "style": "bubbles", "bubbles": default_bubbles(), "saved": []},
     "gestures": {
         "trigger": "auto",    # release: judged when the button comes up | auto: a long clear swipe fires at once
@@ -224,28 +234,33 @@ DEFAULTS = {
         "far_mm": 16.0,       # travel after which a swipe fires while the button is still held
         "step_mm": 8.0,       # repeat: travel between two repeats
         "dead": 5,            # degrees on either side of the diagonal where a swipe is ignored
+        "shape_mm": gestures.SHAPE_MM,  # shapes: a stroke shorter than this does not count as part of one
         "bias": 0,            # degrees: > 0 gives sideways swipes more room, < 0 up/down swipes
         "haptic": True,       # vibration during gestures, as set out in "cues"
         "cues": dict(gestures.CUE_PRESETS["normal"], up=0x04, down=0x04, left=0x04, right=0x04),
         "per_direction": False,  # use the up/down/left/right cues instead of the one "swipe" cue
     },
     "app": {"language": "auto", "theme": "graphite", "accent": "#2fd6a7", "model": "photo", "mouse_color": "graphite",
+            "tray_icon": "outline",  # the look of the icon in the system tray
             "api": True},  # let other programs talk to the app over D-Bus
-    # One mouse on two computers, see flow.py
+    # One mouse on two or three computers, see flow.py
     "flow": {
         "enabled": False,
-        "peer": "",           # the other computer's address (name or IP, ":port" allowed); one of the two may leave it empty
-        "key": "",            # pairing key, the same on both computers
-        "port": flow.PORT,    # where this computer listens for the other one
-        "edge": "right",      # the edge of this desktop the other computer is behind: left | right | top | bottom
-        "edge_at": 0.0,       # when that was chosen (Unix time): of the two computers, the later choice decides
+        "id": "",             # what this computer goes by among the others, made up once; a name may be shared, this is not
+        # The other computers, two at most: {"key": the pairing key both hold, "id": what it goes by, "address":
+        # where it was last reached (may be empty), "name": what it calls itself, "edge": the edge of this desktop
+        # it is behind (left | right | top | bottom), "edge_at": when that was chosen (Unix time): the later choice of
+        # two decides}
+        "peers": [],
+        "port": flow.PORT,    # where this computer listens for the others
         "push_mm": 10.0,      # how far the mouse has to be pushed on, once the pointer is at the edge, to cross
         "corner": 10,         # percent of the edge at each of its ends where pushing does nothing (hot corners live there)
         "fullscreen": False,  # cross even while a full-screen window (a game, a film) is in front
         "clipboard": True,    # hand the copied text or picture over with the pointer
         "files": True,        # ... and copied files and folders
         "files_max_mb": 2048,  # at most this much in one go, sending or receiving
-        "peer_name": "",      # what the other computer calls itself, noted when pairing and whenever it connects
+        "cue_arrived": 0x07,  # the vibration when copied files have arrived (None: none)
+        "cue_failed": 0x06,   # ... and when they could not be brought over
         "channel": -1,        # this computer's Easy-Switch channel, noted whenever the mouse is here (-1: not seen yet)
     },
 }
@@ -279,6 +294,33 @@ def _waveform(value, default):
     """A vibration pattern: an id the HAPTIC feature knows, or None for "no vibration"."""
     known = isinstance(value, int) and not isinstance(value, bool) and value in device.WAVEFORMS
     return value if value is None or known else default
+
+
+def _flow_peers(link):
+    """The other computers of Flow, checked: a usable key each, no key twice, an edge of its own each."""
+    found = link.get("peers") if isinstance(link.get("peers"), list) else []
+    if not found and isinstance(link.get("key"), str) and link["key"].strip():  # settings from before there could be two
+        found = [{"key": link["key"], "address": link.get("peer"), "name": link.get("peer_name"), "edge": link.get("edge"),
+                  "edge_at": link.get("edge_at")}]
+    peers, keys, edges = [], set(), set()
+    for entry in found:
+        key = entry.get("key").strip()[:200] if isinstance(entry, dict) and isinstance(entry.get("key"), str) else ""
+        if not flow.key_usable(key) or flow.normalize_key(key) in keys or len(peers) >= flow.MAX_PEERS:
+            continue
+        keys.add(flow.normalize_key(key))
+        edge = entry.get("edge") if entry.get("edge") in flow.EDGES and entry.get("edge") not in edges else \
+            next(side for side in ("right", "left", "top", "bottom") if side not in edges)
+        edges.add(edge)
+        chosen = entry.get("edge_at")
+        peers.append({
+            "key": key,
+            "id": entry["id"][:64] if isinstance(entry.get("id"), str) else "",
+            "address": entry["address"].strip()[:200] if isinstance(entry.get("address"), str) else "",
+            "name": entry["name"].strip()[:64] if isinstance(entry.get("name"), str) else "",
+            "edge": edge,
+            "edge_at": float(min(max(chosen, 0.0), 4.0e9)) if isinstance(chosen, (int, float)) and not isinstance(chosen, bool) else 0.0,
+        })
+    return peers
 
 
 def _migrate_ring(ring):
@@ -320,6 +362,11 @@ def _sanitize(cfg):
             for direction in ("tap", "up", "down", "left", "right"):
                 sub = action.get(direction)
                 clean[direction] = sub if isinstance(sub, dict) and "type" in sub else {"type": "none"}
+            drawn = action.get("shapes")  # shape id -> action, for the shapes that have one
+            drawn = {name: sub for name, sub in (drawn.items() if isinstance(drawn, dict) else ())
+                     if name in gestures.SHAPES and isinstance(sub, dict) and sub.get("type") not in (None, "none")}
+            if drawn:
+                clean["shapes"] = drawn
             cfg["buttons"][key] = clean
     cfg["ring"]["bubbles"] = _sanitize_bubbles(_migrate_ring(cfg["ring"]), 1) or default_bubbles()
     cfg["ring"].pop("slots", None)
@@ -339,6 +386,8 @@ def _sanitize(cfg):
         cfg["app"]["model"] = "studio"  # the plain 3D style was folded into the glossy one
     if cfg["app"].get("model") not in MODEL_STYLES:
         cfg["app"]["model"] = DEFAULTS["app"]["model"]
+    if cfg["app"].get("tray_icon") not in TRAY_ICONS:
+        cfg["app"]["tray_icon"] = DEFAULTS["app"]["tray_icon"]
     if cfg["app"].get("mouse_color") not in MOUSE_COLORS:
         cfg["app"]["mouse_color"] = DEFAULTS["app"]["mouse_color"]
     cfg["app"].pop("gesture_distance", None)
@@ -355,6 +404,7 @@ def _sanitize(cfg):
     _clamp(cfg, "gestures", "far_mm", 6.0, 45.0, float)
     _clamp(cfg, "gestures", "step_mm", 2.0, 30.0, float)
     _clamp(cfg, "gestures", "dead", 0, 30)
+    _clamp(cfg, "gestures", "shape_mm", 3.0, 20.0, float)
     _clamp(cfg, "gestures", "bias", -25, 25)
     cfg["gestures"]["far_mm"] = max(cfg["gestures"]["far_mm"], cfg["gestures"]["min_mm"] + 2.0)
     if cfg["thumbwheel"].get("function") not in THUMB_FUNCTIONS:
@@ -381,15 +431,16 @@ def _sanitize(cfg):
     link = cfg["flow"]
     for key in ("enabled", "clipboard", "files", "fullscreen"):
         link[key] = bool(link.get(key))
-    for key in ("peer", "key", "peer_name"):
-        link[key] = link[key].strip()[:200] if isinstance(link.get(key), str) else ""
+    link["peers"] = _flow_peers(link)
+    link["id"] = link["id"][:64] if isinstance(link.get("id"), str) else ""
+    for old in ("key", "peer", "peer_name", "edge", "edge_at"):  # where the one other computer was kept before there could be two
+        link.pop(old, None)
+    for key in ("cue_arrived", "cue_failed"):
+        link[key] = _waveform(link.get(key, DEFAULTS["flow"][key]), DEFAULTS["flow"][key])
     _clamp(cfg, "flow", "push_mm", 0.0, 60.0, float)
     _clamp(cfg, "flow", "corner", 0, 40)
     _clamp(cfg, "flow", "files_max_mb", 1, 65536)
-    if link.get("edge") not in flow.EDGES:
-        link["edge"] = DEFAULTS["flow"]["edge"]
     _clamp(cfg, "flow", "port", 1024, 65535)
-    _clamp(cfg, "flow", "edge_at", 0.0, 4.0e9, float)
     _clamp(cfg, "flow", "channel", -1, 15)
     for key in ("dpi", "alt_dpi", "precision_dpi"):
         _clamp(cfg, "pointer", key, 100, 32000)
@@ -398,6 +449,12 @@ def _sanitize(cfg):
     _clamp(cfg, "wheel", "speed", 0.25, 4.0, float)
     _clamp(cfg, "thumbwheel", "speed", 0.25, 4.0, float)
     _clamp(cfg, "haptics", "level", 1, 100)
+    rumble = cfg["rumble"]
+    rumble["enabled"] = bool(rumble.get("enabled"))
+    for key in ("light", "medium", "strong"):
+        rumble[key] = _waveform(rumble.get(key, DEFAULTS["rumble"][key]), DEFAULTS["rumble"][key])
+    _clamp(cfg, "rumble", "interval", 60, 300)
+    _clamp(cfg, "rumble", "gain", 0.5, 2.0, float)
     if cfg["haptics"].get("force") is not None:
         _clamp(cfg, "haptics", "force", 0, 0xFFFF)
     return cfg

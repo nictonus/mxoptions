@@ -10,7 +10,7 @@ from .. import APP_NAME, flow, flow_files, flow_pairing
 from ..i18n import _
 from . import theme
 from .pages import ScrollPage
-from .widgets import Card, Row, Segmented, SliderRow, Switch
+from .widgets import Card, PatternRow, Row, Segmented, SliderRow, Switch
 
 FILE_LIMITS = [(100, "100 MB"), (1024, "1 GB"), (2048, "2 GB"), (10240, "10 GB"), (65536, "No limit")]
 
@@ -25,11 +25,12 @@ def _time_left(seconds):
 
 
 class FlowMap(QWidget):
-    """The two computers as they stand: this one in the middle, the other on the side its edge leads
-    to. A click on another side puts it there. The stretch of the edge that leads across is lit;
-    its dark ends are the corners kept free."""
+    """The computers as they stand: this one in the middle, the others on the sides their edges lead
+    to. A click on one of the others picks it; a click on another side then puts it there. The
+    stretch of each edge that leads across is lit; its dark ends are the corners kept free."""
 
-    moved = Signal(str)
+    picked = Signal(str)       # the pairing of the computer clicked
+    moved = Signal(str, str)   # the pairing picked, and the side it is to stand on
 
     SCREEN = (124.0, 80.0)
     GAP = 16.0
@@ -38,19 +39,18 @@ class FlowMap(QWidget):
         super().__init__(parent)
         self.setMinimumHeight(int(3 * self.SCREEN[1] + 2 * self.GAP + 24))
         self.setMouseTracking(True)
-        self._edge = "right"
-        self._corner = 0.1
-        self._names = ("", "")
-        self._linked = False
-        self._mouse = None   # "here", "there" or None: where the mouse is
+        self._state = ("", (), 0.1, False, True, "")  # this one's name, the others, corners, the mouse is here, enabled, picked
         self._hover = None
-        self._enabled = True
 
-    def set_state(self, edge, corner, here, there, linked, mouse, enabled):
-        state = (edge, corner, (here, there), linked, mouse, enabled)
-        if state != (self._edge, self._corner, self._names, self._linked, self._mouse, self._enabled):
-            self._edge, self._corner, self._names, self._linked, self._mouse, self._enabled = state
+    def set_state(self, here, peers, corner, mouse_here, enabled, selected):
+        """``peers``: [{"pair", "edge", "name", "linked", "mouse": the mouse is on it}]."""
+        state = (here, tuple(tuple(sorted(peer.items())) for peer in peers), corner, mouse_here, enabled, selected)
+        if state != self._state:
+            self._state = state
             self.update()
+
+    def _peers(self):
+        return [dict(peer) for peer in self._state[1]]
 
     def _rects(self):
         width, height = self.SCREEN
@@ -66,10 +66,10 @@ class FlowMap(QWidget):
         return next((edge for edge, rect in slots.items() if rect.contains(pos)), None)
 
     def mouseMoveEvent(self, event):
-        hover = self._slot_at(event.position()) if self._enabled else None
+        hover = self._slot_at(event.position()) if self._state[4] and self._state[1] else None
         if hover != self._hover:
             self._hover = hover
-            self.setCursor(Qt.CursorShape.PointingHandCursor if hover and hover != self._edge else Qt.CursorShape.ArrowCursor)
+            self.setCursor(Qt.CursorShape.PointingHandCursor if hover else Qt.CursorShape.ArrowCursor)
             self.update()
 
     def leaveEvent(self, _event):
@@ -78,13 +78,20 @@ class FlowMap(QWidget):
             self.update()
 
     def mousePressEvent(self, event):
-        edge = self._slot_at(event.position()) if self._enabled else None
-        if edge and edge != self._edge:
-            self.moved.emit(edge)
+        edge = self._slot_at(event.position()) if self._state[4] else None
+        if not edge:
+            return
+        there = next((peer for peer in self._peers() if peer["edge"] == edge), None)
+        selected = self._state[5]
+        if there is not None and there["pair"] != selected:
+            self.picked.emit(there["pair"])
+        elif there is None and selected:
+            self.moved.emit(selected, edge)
 
-    def _computer(self, painter, rect, name, caption, lit, has_mouse):
+    def _computer(self, painter, rect, name, caption, lit, has_mouse, picked=False):
         accent, text, muted = QColor(theme.ACCENT), QColor(theme.TEXT), QColor(theme.MUTED)
-        painter.setPen(QPen(accent if has_mouse else QColor(theme.BORDER), 1.6 if has_mouse else 1.2))
+        painter.setPen(QPen(accent if (has_mouse or picked) else QColor(theme.BORDER), 1.6 if has_mouse else 1.2,
+                            Qt.PenStyle.SolidLine if has_mouse or not picked else Qt.PenStyle.DotLine))
         painter.setBrush(QColor(theme.CARD_HOVER if lit else theme.CARD))
         painter.drawRoundedRect(rect, 9, 9)
         stand = QRectF(rect.center().x() - 16, rect.bottom() + 3, 32, 3)
@@ -114,11 +121,14 @@ class FlowMap(QWidget):
     def paintEvent(self, _event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        here_name, _peers, corner, mouse_here, enabled, selected = self._state
+        peers = self._peers()
         here, slots = self._rects()
-        for edge, rect in slots.items():  # the places the other computer could stand in
-            if edge == self._edge:
+        taken = {peer["edge"] for peer in peers}
+        for edge, rect in slots.items():  # the places another computer could stand in
+            if edge in taken:
                 continue
-            hovered = edge == self._hover
+            hovered = edge == self._hover and bool(selected)
             colour = QColor(theme.ACCENT if hovered else theme.MUTED)
             colour.setAlphaF(0.95 if hovered else 0.42)
             painter.setPen(QPen(colour, 1.3, Qt.PenStyle.DashLine))
@@ -126,37 +136,42 @@ class FlowMap(QWidget):
             fill.setAlphaF(0.10 if hovered else 0.0)
             painter.setBrush(fill)
             painter.drawRoundedRect(rect, 9, 9)
-        # the edge that leads across, between the two
-        upright = self._edge in ("left", "right")
-        if upright:
-            x = here.right() + self.GAP / 2 if self._edge == "right" else here.left() - self.GAP / 2
-            start, end = QPointF(x, here.top() + 4), QPointF(x, here.bottom() - 4)
-        else:
-            y = here.bottom() + self.GAP / 2 if self._edge == "bottom" else here.top() - self.GAP / 2
-            start, end = QPointF(here.left() + 4, y), QPointF(here.right() - 4, y)
-        painter.setPen(QPen(QColor(theme.BORDER), 4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        painter.drawLine(start, end)
-        if self._enabled:
-            lit = QColor(theme.ACCENT if self._linked else theme.MUTED)
-            painter.setPen(QPen(lit, 4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-            painter.drawLine(start + (end - start) * self._corner, start + (end - start) * (1.0 - self._corner))
-        self._computer(painter, here, self._names[0], _("This computer"), True, self._mouse == "here")
-        caption = _("Connected") if self._linked else _("Not connected")
-        self._computer(painter, slots[self._edge], self._names[1], caption, self._linked, self._mouse == "there")
+        for peer in peers:  # the edge that leads across, between this computer and that one
+            edge = peer["edge"]
+            if edge in ("left", "right"):
+                x = here.right() + self.GAP / 2 if edge == "right" else here.left() - self.GAP / 2
+                start, end = QPointF(x, here.top() + 4), QPointF(x, here.bottom() - 4)
+            else:
+                y = here.bottom() + self.GAP / 2 if edge == "bottom" else here.top() - self.GAP / 2
+                start, end = QPointF(here.left() + 4, y), QPointF(here.right() - 4, y)
+            painter.setPen(QPen(QColor(theme.BORDER), 4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            painter.drawLine(start, end)
+            if enabled:
+                lit = QColor(theme.ACCENT if peer["linked"] else theme.MUTED)
+                painter.setPen(QPen(lit, 4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+                painter.drawLine(start + (end - start) * corner, start + (end - start) * (1.0 - corner))
+        self._computer(painter, here, here_name, _("This computer"), True, mouse_here)
+        for peer in peers:
+            caption = _("Connected") if peer["linked"] else _("Not connected")
+            self._computer(painter, slots[peer["edge"]], peer["name"] or _("The other one"), caption, peer["linked"], peer["mouse"],
+                           picked=len(peers) > 1 and peer["pair"] == selected)
 
 
 class FlowPage(ScrollPage):
     def __init__(self, store, parent=None):
         super().__init__(_("Flow"), _(
-            "One mouse on two computers. Push the pointer past the edge of the screen and the mouse moves on to the "
-            "other computer, together with what you copied: text, pictures and files. Both computers run MX Options, "
-            "are on the same network and are paired with the mouse on different Easy-Switch channels."
+            "One mouse on two or three computers. Push the pointer past the edge of the screen and the mouse moves on "
+            "to the computer behind it, together with what you copied: text, pictures and files. Every computer runs "
+            "MX Options, they are on the same network, and the mouse is paired with each on an Easy-Switch channel "
+            "of its own."
         ), parent)
         self.store = store
         self._offers_shown = None
-        self._codes = {}  # offer id -> the line edit its code is typed into
+        self._paired_shown = None
+        self._codes = {}      # offer id -> the line edit its code is typed into
+        self._selected = ""   # the pairing of the computer the picture and the fields below are about
 
-        # where the two stand, and whether Flow is on
+        # where they stand, and whether Flow is on
         card = Card()
         self.enabled = Switch()
         self.enabled.toggled.connect(lambda on: self.store.set("flow", "enabled", on))
@@ -167,9 +182,10 @@ class FlowPage(ScrollPage):
         self.transfer_row = card.add(Row(" ", None, stop, note=" "))  # shown while copied files are on their way
         self.head_card = card
         self.map = FlowMap()
-        self.map.moved.connect(lambda edge: self.store.set("flow", "edge", edge))
+        self.map.picked.connect(self._pick)
+        self.map.moved.connect(lambda pair, edge: self.store.flow and self.store.flow.place(pair, edge))
         card.add_plain(self.map)
-        self.map_hint = QLabel(_("Click a place next to this computer to put the other one there. It follows by itself."))
+        self.map_hint = QLabel()
         self.map_hint.setObjectName("rowHint")
         self.map_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         card.add_plain(self.map_hint)
@@ -178,12 +194,14 @@ class FlowPage(ScrollPage):
         # pairing
         card = Card(_("Pairing"), hint=_(
             "One computer shows a six-digit code, you type it on the other, and the two agree on a key that everything "
-            "between them is encrypted with. The code itself is never sent, and three wrong tries withdraw it."
+            "between them is encrypted with. The code itself is never sent, and three wrong tries withdraw it. A "
+            "computer can be paired with two others, one on each side."
         ))
-        self.unpair = QPushButton(_("Forget"))
-        self.unpair.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.unpair.clicked.connect(self._forget)
-        self.paired_row = card.add(Row(_("Paired"), None, self.unpair, note=" "))
+        self.paired = QWidget()
+        self.paired_layout = QVBoxLayout(self.paired)
+        self.paired_layout.setContentsMargins(0, 0, 0, 0)
+        self.paired_layout.setSpacing(12)
+        card.add_plain(self.paired)
         self.show_code = QPushButton(_("Show a code"))
         self.show_code.setObjectName("primary")
         self.show_code.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -250,7 +268,7 @@ class FlowPage(ScrollPage):
         self.files_row = card.add(Row(
             _("Copied files and folders"),
             _("Copy them in the file manager, cross, and paste. They are sent over when you cross and wait on the "
-              "other computer for a day."),
+              "other computer for a day. Until they have all arrived, the clipboard there stays as it was."),
             self.files, note=" "))
         self.limit = Segmented([(value, _(label) if label == "No limit" else label) for value, label in FILE_LIMITS])
         self.limit.selected.connect(lambda value: self.store.set("flow", "files_max_mb", value))
@@ -258,6 +276,13 @@ class FlowPage(ScrollPage):
             _("Largest amount in one go"),
             _("More than this stays behind, so that a huge folder left on the clipboard is not sent by accident."),
             self.limit))
+        self.cues = {}
+        for key, title in (("cue_arrived", _("Vibration when the files have arrived")),
+                           ("cue_failed", _("Vibration when they could not be brought over"))):
+            row = PatternRow(title)
+            row.changed.connect(lambda waveform, k=key: self.store.set("flow", k, waveform))
+            row.played.connect(self.store.engine.play_haptic)
+            self.cues[key] = card.add(row)
         self.body.addWidget(card)
 
         # by hand
@@ -269,7 +294,7 @@ class FlowPage(ScrollPage):
         self.peer = QLineEdit()
         self.peer.setPlaceholderText("192.168.1.20")
         self.peer.setMinimumWidth(250)
-        self.peer.editingFinished.connect(lambda: self.store.set("flow", "peer", self.peer.text().strip()))
+        self.peer.editingFinished.connect(lambda: self._by_hand(address=self.peer.text().strip()))
         self.peer_row = card.add(Row(_("Address of the other computer"), None, self.peer, note=" "))
         key = QWidget()
         key_layout = QHBoxLayout(key)
@@ -279,14 +304,14 @@ class FlowPage(ScrollPage):
         self.key.setPlaceholderText("XXXX-XXXX-XXXX-XXXX-XXXX-XXXX")
         self.key.setMinimumWidth(310)
         self.key.setEchoMode(QLineEdit.EchoMode.PasswordEchoOnEdit)
-        self.key.editingFinished.connect(lambda: self.store.set("flow", "key", self.key.text().strip()))
+        self.key.editingFinished.connect(lambda: self._by_hand(key=self.key.text().strip()))
         key_layout.addWidget(self.key)
-        for label, slot in ((_("Generate"), self._new_key), (_("Copy"), lambda: QApplication.clipboard().setText(self.store.cfg["flow"]["key"]))):
+        for label, slot in ((_("Generate"), self._new_key), (_("Copy"), lambda: QApplication.clipboard().setText(self.key.text()))):
             button = QPushButton(label)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.clicked.connect(slot)
             key_layout.addWidget(button)
-        card.add(Row(_("Key"), _("The same on both computers. Pairing by code sets it for you."), key))
+        self.key_row = card.add(Row(_("Key"), _("The same on both computers. Pairing by code sets it for you."), key))
         self.body.addWidget(card)
         self.finish()
 
@@ -298,18 +323,46 @@ class FlowPage(ScrollPage):
 
     # -- actions -----------------------------------------------------------------
 
-    def _forget(self):
-        answer = QMessageBox.question(self, APP_NAME, _("Forget the other computer? To use Flow again the two have to be paired anew."))
+    def _pick(self, pair):
+        self._selected = pair
+        self._refresh()
+
+    def _forget(self, pair, name):
+        answer = QMessageBox.question(self, APP_NAME, _("Forget {}? To use Flow with it again the two have to be paired anew.").format(name))
         if answer == QMessageBox.StandardButton.Yes and self.store.flow is not None:
-            self.store.flow.unpair()
+            self.store.flow.unpair(pair)
+
+    def _entry(self):
+        """The settings of the computer picked, or None."""
+        return next((entry for entry in self.store.cfg["flow"]["peers"] if flow.pair_id(entry["key"]) == self._selected), None)
+
+    def _by_hand(self, key=None, address=None):
+        """The key or the address typed in: for the computer picked, or for a new one if there is none yet."""
+        peers = [dict(entry) for entry in self.store.cfg["flow"]["peers"]]
+        entry = next((entry for entry in peers if flow.pair_id(entry["key"]) == self._selected), None)
+        if entry is None:
+            if not key or not flow.key_usable(key) or len(peers) >= flow.MAX_PEERS:
+                return
+            taken = {entry["edge"] for entry in peers}
+            entry = {"key": key, "id": "", "address": self.peer.text().strip(), "name": "", "edge_at": 0.0,
+                     "edge": next(side for side in ("right", "left", "top", "bottom") if side not in taken)}
+            peers.append(entry)
+        elif key is not None:
+            if not flow.key_usable(key):
+                return
+            entry["key"] = key
+        if address is not None:
+            entry["address"] = address
+        self._selected = flow.pair_id(entry["key"])
+        self.store.set("flow", "peers", peers)
 
     def _new_key(self):
-        if self.store.cfg["flow"]["key"]:
+        if self._entry() is not None:
             answer = QMessageBox.question(
                 self, APP_NAME, _("Replace the key? The other computer will need the new one before Flow works again."))
             if answer != QMessageBox.StandardButton.Yes:
                 return
-        self.store.set("flow", "key", flow.new_key())
+        self._by_hand(key=flow.new_key())
 
     def _pair(self, offer):
         field = self._codes.get(offer["id"])
@@ -329,20 +382,16 @@ class FlowPage(ScrollPage):
 
     # -- showing what is ----------------------------------------------------------------
 
-    def _status_text(self, cfg, status, name):
-        peer = status["peer"]
-        channel = (peer or {}).get("channel")
+    def _peer_text(self, peer, status):
+        """What stands in the way of crossing to one of the other computers, or that nothing does."""
+        name = peer["name"] or _("the other computer")
+        channel = peer["channel"]
         known = isinstance(channel, int) and not isinstance(channel, bool) and channel >= 0
-        if not status["supported"]:
-            return _("Flow needs Python 3.13 or newer on this computer.")
-        if not status["paired"]:
-            return _("Pair this computer with another one to begin.")
-        if not cfg["enabled"]:
-            return _("Flow is off.")
-        if status["problem"]:
-            return _("Cannot listen for the other computer: {}").format(status["problem"])
-        if peer is None:
+        if not peer["linked"]:
             return _("Looking for {}…").format(name)
+        if peer.get("quiet"):
+            return _("{} is not answering right now: the network between the two stalls, or it is asleep. The mouse "
+                     "stays here until it answers.").format(name)
         if not known:
             return _("Connected to {}. It has not seen the mouse yet: switch the mouse to it once with the Easy-Switch "
                      "button, and it will know its channel from then on.").format(name)
@@ -357,29 +406,51 @@ class FlowPage(ScrollPage):
                      "or a ring bubble the action “Move to the other computer (Flow)”.").format(name)
         return _("Connected to {}. Push the pointer past the lit edge to cross.").format(name)
 
+    def _status_text(self, cfg, status):
+        if not status["supported"]:
+            return _("Flow needs Python 3.13 or newer on this computer.")
+        if not status["peers"]:
+            return _("Pair this computer with another one to begin.")
+        if not cfg["enabled"]:
+            return _("Flow is off.")
+        if status["problem"]:
+            return _("Cannot listen for the other computer: {}").format(status["problem"])
+        return "\n".join(self._peer_text(peer, status) for peer in status["peers"])
+
     def _refresh(self):
         cfg, service = self.store.cfg["flow"], self.store.flow
-        status = service.status() if service is not None else {
-            "supported": flow.supported(), "on": False, "paired": flow.key_usable(cfg["key"]), "address": "", "problem": "",
-            "peer": None, "channel": cfg["channel"], "here": bool(self.store.state["connected"]), "edges": True, "rich": True,
-            "pairing": None, "offers": [], "pair_error": ""}
-        peer = status["peer"]
-        name = (peer or {}).get("name") or cfg["peer_name"] or _("the other computer")
-        paired, pairing = status["paired"], status["pairing"]
+        if service is not None:
+            status = service.status()
+        else:  # the page on its own, as when it is drawn for the documentation
+            status = {"supported": flow.supported(), "on": False, "address": "", "problem": "", "channel": cfg["channel"],
+                      "here": bool(self.store.state["connected"]), "edges": True, "rich": True, "pairing": None,
+                      "transfer": None, "offers": [], "pair_error": "",
+                      "peers": [{"pair": flow.pair_id(entry["key"]), "name": entry["name"], "edge": entry["edge"], "address": entry["address"],
+                                 "key": entry["key"], "linked": False, "channel": None, "present": False, "quiet": False}
+                                for entry in cfg["peers"]]}
+        peers, pairing = status["peers"], status["pairing"]
+        if self._selected not in [peer["pair"] for peer in peers]:
+            self._selected = peers[0]["pair"] if peers else ""
+        picked = next((peer for peer in peers if peer["pair"] == self._selected), None)
 
-        self.enabled.set_checked_silently(cfg["enabled"] and paired)
-        self.enabled.setEnabled(status["supported"] and paired)
-        self.head.note.setText(self._status_text(cfg, status, name))
-        mouse = "here" if status["here"] else ("there" if peer and peer.get("present") else None)
-        there = (peer or {}).get("name") or cfg["peer_name"] or _("The other one")
-        self.map.set_state(cfg["edge"], cfg["corner"] / 100.0, socket.gethostname(), there, peer is not None, mouse,
-                           status["supported"])
+        self.enabled.set_checked_silently(cfg["enabled"] and bool(peers))
+        self.enabled.setEnabled(status["supported"] and bool(peers))
+        self.head.note.setText(self._status_text(cfg, status))
+        self.map.set_state(socket.gethostname(), [
+            {"pair": peer["pair"], "edge": peer["edge"], "name": peer["name"], "linked": peer["linked"],
+             "mouse": peer["present"] and not status["here"]} for peer in peers],
+            cfg["corner"] / 100.0, status["here"], status["supported"], self._selected)
+        if len(peers) > 1:
+            self.map_hint.setText(_("Click one of the other computers, then the place next to this one where it stands."))
+        elif peers:
+            self.map_hint.setText(_("Click a place next to this computer to put the other one there. It follows by itself."))
+        self.map_hint.setVisible(bool(peers))
 
         transfer = status.get("transfer")
         self.head_card.set_row_visible(self.transfer_row, transfer is not None)
         if transfer is not None:
             title = _("Sending {count} file(s) to {name}") if transfer["sending"] else _("Receiving {count} file(s) from {name}")
-            self.transfer_row.title.setText(title.format(count=transfer["count"], name=name))
+            self.transfer_row.title.setText(title.format(count=transfer["count"], name=transfer.get("name") or _("the other computer")))
             parts = [_("{done} of {total}").format(done=flow_files.human(transfer["done"]), total=flow_files.human(transfer["total"]))]
             if transfer["rate"]:
                 parts.append(_("{}/s").format(flow_files.human(transfer["rate"])))
@@ -387,11 +458,24 @@ class FlowPage(ScrollPage):
             self.transfer_row.note.setText("  ·  ".join(parts))
 
         # pairing
-        self.pair_card.set_row_visible(self.paired_row, paired)
-        self.paired_row.title.setText(_("Paired with {}").format(name))
-        self.paired_row.note.setText(_("Connected, everything between the two is encrypted.") if peer is not None
-                                     else _("Not connected right now."))
-        self.pair_card.set_row_visible(self.start_row, not paired and pairing is None)
+        shown = tuple((peer["pair"], peer["name"], peer["linked"]) for peer in peers)
+        if shown != self._paired_shown:
+            self._paired_shown = shown
+            while self.paired_layout.count():
+                item = self.paired_layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+            for peer in peers:
+                name = peer["name"] or _("the other computer")
+                forget = QPushButton(_("Forget"))
+                forget.setCursor(Qt.CursorShape.PointingHandCursor)
+                forget.clicked.connect(lambda _checked=False, p=peer["pair"], n=name: self._forget(p, n))
+                self.paired_layout.addWidget(Row(
+                    _("Paired with {}").format(name), None, forget,
+                    note=_("Connected, everything between the two is encrypted.") if peer["linked"] else _("Not connected right now.")))
+        self.paired.setVisible(bool(peers))
+        room = len(peers) < flow.MAX_PEERS
+        self.pair_card.set_row_visible(self.start_row, room and pairing is None)
         self.show_code.setEnabled(status["supported"] and service is not None)
         error = {"code": _("That was not the code. Look at the other computer again."),
                  "closed": _("The other computer no longer shows a code. Press “Show a code” there again."),
@@ -406,7 +490,7 @@ class FlowPage(ScrollPage):
             self.code_row.note.setText(
                 _("On the other computer, open Flow in MX Options: this computer is listed there. The code is valid for "
                   "{seconds} more seconds; wrong tries left: {left}.").format(seconds=pairing["seconds"], left=pairing["left"]))
-        offers = [] if paired else status["offers"]
+        offers = status["offers"] if room else []
         shown = tuple(offer["id"] for offer in offers)
         if shown != self._offers_shown:
             self._offers_shown = shown
@@ -449,11 +533,18 @@ class FlowPage(ScrollPage):
         self.files_row.note.setVisible(not status["rich"])
         self.limit.set_value(min((value for value, _label in FILE_LIMITS), key=lambda value: abs(value - cfg["files_max_mb"])))
         self.limit_row.setEnabled(cfg["files"] and status["rich"])
+        waveforms = (self.store.state.get("caps") or {}).get("waveforms")
+        for key, row in self.cues.items():
+            if waveforms:
+                row.set_waveforms(waveforms)
+            row.set_value(cfg[key])
+            row.setEnabled(cfg["files"] and status["rich"])
 
-        # by hand
-        for field, value in ((self.peer, cfg["peer"]), (self.key, cfg["key"])):
+        # by hand: the computer picked, or a new one
+        for field, value in ((self.peer, picked["address"] if picked else ""), (self.key, picked["key"] if picked else "")):
             if not field.hasFocus() and field.text() != value:  # never under the hands of someone typing
                 field.setText(value)
+        self.peer_row.title.setText(_("Address of {}").format(picked["name"]) if picked and picked["name"] else _("Address of the other computer"))
         here = status["address"] + ("" if cfg["port"] == flow.PORT or not status["address"] else f":{cfg['port']}")
         self.peer_row.note.setText(_("This computer's address: {}").format(here) if here else "")
         self.peer_row.note.setVisible(bool(here))

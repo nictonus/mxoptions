@@ -8,6 +8,9 @@
 #   sudo make udev        install the device access rules (once; see README, "Permissions")
 #   make uninstall-user   remove the per-user installation
 #   sudo make uninstall   remove the system-wide installation
+#   make deb              build the Debian/Ubuntu package into dist/ (needs only Python)
+#   make deb-test         install that package inside Debian and run the tests there (no root, no container engine)
+#   make rpm              build the RPM inside Fedora, install it there and run the tests
 #   make dist             build the files of a release into dist/ (after its tag is on GitHub)
 #   make aur              publish packaging/aur to the AUR (needs an AUR account with your SSH key)
 #
@@ -33,7 +36,7 @@ python_path = $(shell command -v $(PYTHON))
 substitute = sed -e 's|@BINDIR@|$(bindir)|g' -e 's|@LIBDIR@|$(libdir)|g' -e 's|@DOCDIR@|$(docdir)|g' \
 	-e 's|@PYTHON@|$(python_path)|g'
 
-.PHONY: all build test check wheel dist aur run screenshots install install-user uninstall uninstall-user enable disable udev clean
+.PHONY: all build test check wheel deb deb-test rpm dist aur run screenshots install install-user uninstall uninstall-user enable disable udev clean
 
 all: build
 
@@ -48,6 +51,25 @@ check: build test
 
 wheel:
 	$(PYTHON) -m build --wheel --no-isolation --outdir dist
+
+# The Debian package: the files as "install" lays them out under /usr, wrapped up by tools/make_deb.py.
+# The RPM is built from packaging/rpm/mxoptions.spec, on a system that has rpmbuild or with "make rpm".
+deb: build
+	rm -rf build/deb
+	$(MAKE) install DESTDIR="$(CURDIR)/build/deb" PREFIX=/usr udevdir=/usr/lib/udev/rules.d
+	$(PYTHON) tools/make_deb.py build/deb dist
+	rm -rf build
+
+# Trying the packages where they belong. tools/distro.py fetches the distribution's official image and
+# enters it through a user namespace; what gets installed there is kept for the next run.
+DEBIAN ?= debian:trixie-slim
+FEDORA ?= fedora:42
+
+deb-test: deb
+	$(PYTHON) tools/distro.py $(DEBIAN) -- sh packaging/deb/check.sh
+
+rpm: build
+	$(PYTHON) tools/distro.py $(FEDORA) -- sh packaging/rpm/build.sh
 
 # What a release on GitHub carries: the Arch package (built by packaging/aur/PKGBUILD from the
 # tagged source archive, so the tag has to be pushed first), the wheel, and their checksums.
@@ -103,6 +125,7 @@ install-user:
 
 uninstall-user: disable
 	$(MAKE) uninstall PREFIX="$(user_prefix)" unitdir="$(user_unitdir)" UDEV=
+	rm -f "$(or $(XDG_DATA_HOME),$(HOME)/.local/share)"/icons/hicolor/scalable/status/mxoptions-tray-*.svg  # written by the program for its tray icon
 	-systemctl --user daemon-reload
 
 enable:

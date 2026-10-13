@@ -28,14 +28,17 @@ log = logging.getLogger(__name__)
 PORT = 47846                      # TCP: where a computer listens for the link (a setting)
 DISCOVERY_PORT = PORT             # UDP, see "finding each other" below
 PAIR_PORT = PORT + 1              # TCP, open only while a pairing code is on show
-PROTOCOL = 2
+PROTOCOL = 3
+MAX_PEERS = 2                     # other computers one can be linked with: the mouse has three channels
 EDGES = ("left", "right", "top", "bottom")
 OPPOSITE = {"left": "right", "right": "left", "top": "bottom", "bottom": "top"}
 MIN_KEY = 12                      # characters a pairing key needs, not counting separators
 MAX_LINE = 4 * 1024 * 1024        # bytes one message may take
 MAX_CLIPBOARD = 1024 * 1024       # bytes of text handed over with the pointer; more stays behind
 PING_INTERVAL = 4.0               # s of silence after which the other side is asked whether it is there
-DEAD_AFTER = 12.0                 # s of silence after which the link counts as lost
+QUIET_AFTER = 20.0                # s of silence after which it is not trusted to take the mouse (a poor network stalls for a while)
+DEAD_AFTER = 60.0                 # s of silence after which the link counts as lost
+INLINE_FILES = 512 * 1024         # bytes of copied files that go along at once, without a connection of their own
 RETRY = 3.0                       # s between two attempts to reach the other computer
 HANDSHAKE = 5.0
 ENTRY_INSET = 24                  # px the pointer is put in from the edge it arrives through
@@ -80,8 +83,15 @@ def _secret(key):
     return hashlib.sha256(b"mxoptions-flow-1:" + normalize_key(key).encode("utf-8")).digest()
 
 
-def _context(key, server):
-    secret = _secret(key)
+def pair_id(key):
+    """What two computers that hold the same key call their pairing. A computer linked with several
+    others is told by it which key a caller means; it gives nothing of the key away."""
+    return hashlib.sha256(b"mxoptions-flow-pair:" + normalize_key(key).encode("utf-8")).hexdigest()[:16]
+
+
+def _context(keys, server):
+    """TLS for the link. A listener (``server``) takes ``keys`` as {pair id: key} and lets a caller in
+    with whichever of them it names; a caller takes the one key of the pairing it is calling."""
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER if server else ssl.PROTOCOL_TLS_CLIENT)
     if not server:
         context.check_hostname = False
@@ -89,9 +99,11 @@ def _context(key, server):
     context.minimum_version = context.maximum_version = ssl.TLSVersion.TLSv1_2
     context.set_ciphers(_CIPHERS)
     if server:
-        context.set_psk_server_callback(lambda _identity: secret, _IDENTITY)
+        known = {pair: _secret(key) for pair, key in keys.items()}
+        context.set_psk_server_callback(lambda identity: known.get(identity or "", b""), _IDENTITY)  # an empty key refuses
     else:
-        context.set_psk_client_callback(lambda _hint: (_IDENTITY, secret))
+        identity, secret = pair_id(keys), _secret(keys)
+        context.set_psk_client_callback(lambda _hint: (identity, secret))
     return context
 
 
@@ -199,7 +211,8 @@ def _here_tag(secret, link_id, port, when):
 
 def here_beacon(key, link_id, port, when=None):
     when = int(time.time() if when is None else when)
-    return {"app": _APP, "t": "here", "id": link_id, "port": port, "ts": when, "tag": _here_tag(_secret(key), link_id, port, when)}
+    return {"app": _APP, "t": "here", "pair": pair_id(key), "id": link_id, "port": port, "ts": when,
+            "tag": _here_tag(_secret(key), link_id, port, when)}
 
 
 def offer_beacon(link_id, name, port):
@@ -208,7 +221,8 @@ def offer_beacon(link_id, name, port):
 
 def read_beacon(data, key=None, now=None):
     """What a datagram says, or None if it is not one of ours. A "here" call counts only when it is
-    signed with ``key`` and recent."""
+    recent and signed with ``key``, or with one of several given as {pair id: key}."""
+    keys = {pair_id(key): key} if isinstance(key, str) else dict(key or {})
     try:
         beacon = json.loads(data)
     except ValueError:
@@ -220,12 +234,12 @@ def read_beacon(data, key=None, now=None):
         return None
     if beacon.get("t") == "pair":
         return {"t": "pair", "id": beacon["id"], "name": str(beacon.get("name") or "")[:64], "port": port}
-    if beacon.get("t") == "here" and key:
+    if beacon.get("t") == "here" and beacon.get("pair") in keys:
         when, tag = beacon.get("ts"), beacon.get("tag")
         now = time.time() if now is None else now
         if (isinstance(when, int) and isinstance(tag, str) and abs(now - when) <= BEACON_AGE
-                and hmac.compare_digest(tag, _here_tag(_secret(key), beacon["id"], port, when))):
-            return {"t": "here", "id": beacon["id"], "port": port}
+                and hmac.compare_digest(tag, _here_tag(_secret(keys[beacon["pair"]]), beacon["id"], port, when))):
+            return {"t": "here", "pair": beacon["pair"], "id": beacon["id"], "port": port}
     return None
 
 
@@ -258,7 +272,9 @@ class _Connection:
         self.writer = writer
         self.dialed = dialed  # we called the other computer (it called us otherwise)
         self.dialer = ""      # id of the side that called
+        self.pair = ""        # which pairing this connection belongs to
         self.heard = time.monotonic()  # when the other side last said anything
+        self.quiet = False             # it has not answered for a while
         self.port = None               # where the other side listens, as it said in its hello
 
     def send(self, message, data=None):
@@ -315,16 +331,17 @@ def _say(writer, message):
 
 
 class Link:
-    """The connection to the other computer, kept up from a thread of its own.
+    """The connections to the other computers, kept up from a thread of their own.
 
-    Both computers listen; each calls the other at the address it was given or heard a "here I
-    am" from, and keeps calling until it answers. ``on_event(kind, payload)`` is called from the
-    link's thread:
+    Every computer listens; each calls the others at the address it was given or heard a "here I
+    am" from, and keeps calling until they answer. ``on_event(kind, payload, pair)`` is called from
+    the link's thread, ``pair`` being the pairing (pair_id) it is about, "" where there is none:
 
         "up"            the other computer's status ({"name", "channel", "present", ...}): the link is there
         "status"        its status changed
         "message"       anything else it sent, as a dict with "t" naming what it is ("data": bytes that came with it)
         "down"          the link is gone
+        "quiet"         True: that computer has not answered for a while (the network stalls, or it sleeps); False: it is back
         "problem"       text: why this computer cannot listen ("" once it can)
         "files-coming"  files are on their way here: {"count", "total"}
         "files-progress" how far a transfer is: {"done", "total", "count", "sending": this side sends}
@@ -338,15 +355,17 @@ class Link:
     def __init__(self, on_event, staging=flow_files.STAGING):
         self._on_event = on_event
         self.id = secrets.token_hex(8)
-        self._settings = None  # (key, port, peer) while switched on
-        self._status = {}
+        self._settings = None  # (port, ((pair, key, address), ...)) while switched on
+        self._keys = {}        # pair -> key
+        self._status = {}      # what every other computer is told about this one
+        self._status_for = {}  # pair -> what only that one is told
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._run, name="flow", daemon=True)
         self._server = None
-        self._dialer = None
-        self._conn = None
+        self._dialers = {}          # pair -> the task that keeps calling that computer
+        self._conns = {}            # pair -> the connection in use
         self._closing = False
-        self._found = None          # (address, port) a signed "here I am" came from
+        self._found = {}            # pair -> (address, port) a signed "here I am" came from
         self._udp = None
         self._udp_wanted = False
         self._caller = None         # the task that sends "here I am" and pairing offers
@@ -357,6 +376,7 @@ class Link:
         self._outgoing = None       # files offered and not yet sent: {"id", "items", "sources"}
         self._sending = None        # the task that sends them, on a connection of its own
         self._arriving = None       # the connection files are arriving on
+        self._promised = ""         # the pairing whose computer was told it may send files
 
     # -- thread-safe API ---------------------------------------------------------
 
@@ -368,25 +388,32 @@ class Link:
             self._loop.call_soon_threadsafe(self._shutdown)
             self._thread.join(timeout=3.0)
 
-    def configure(self, key=None, port=PORT, peer=""):
-        """Switch the link on with these settings, or off (no key)."""
-        settings = (key, int(port), peer.strip()) if key and key_usable(key) and supported() else None
-        self._call(self._apply, settings)
+    def configure(self, peers=None, port=PORT, peer=""):
+        """Switch the link on for these other computers, [{"key", "address"}], or off (none). For a
+        single one its key may be given as it is, with its address as ``peer``."""
+        if isinstance(peers, str):
+            peers = [{"key": peers, "address": peer}]
+        entries = tuple((pair_id(entry["key"]), entry["key"], str(entry.get("address") or "").strip())
+                        for entry in (peers or []) if key_usable(entry.get("key") or ""))
+        self._call(self._apply, (int(port), entries) if entries and supported() else None)
 
-    def set_status(self, status):
-        """What the other computer should know about this one; sent now and whenever a link comes up."""
-        self._call(self._set_status, dict(status))
+    def set_status(self, status, per_pair=None):
+        """What the other computers should know about this one, and (``per_pair``: {pair: more}) what only
+        one of them should; sent now and whenever a link comes up."""
+        self._call(self._set_status, dict(status), {pair: dict(more) for pair, more in (per_pair or {}).items()})
 
-    def send(self, message, data=None):
-        self._call(self._send, dict(message), data)
+    def send(self, message, data=None, pair=None):
+        """To the computer of one pairing, or to all that are linked."""
+        self._call(self._send, dict(message), data, pair)
 
     def accept_files(self, limit):
         """Take files of up to ``limit`` bytes in one go from the other computer (None: none at all)."""
         self._call(setattr, self, "_receive_limit", limit)
 
-    def offer_files(self, items, sources):
-        """Send the files listed by flow_files.collect(), if the other computer will have them."""
-        self._call(self._offer_files, list(items), list(sources))
+    def offer_files(self, items, sources, pair=None):
+        """Send the files listed by flow_files.collect() to the computer of ``pair`` (the only one linked,
+        if not given), if it will have them."""
+        self._call(self._offer_files, list(items), list(sources), pair)
 
     def cancel_files(self):
         """Give up the file transfer in progress, whichever way it is going."""
@@ -427,11 +454,11 @@ class Link:
             self._loop.run_until_complete(asyncio.sleep(0.05))  # let the dropped connections finish closing
             self._loop.close()
 
-    def _emit(self, kind, payload=None):
+    def _emit(self, kind, payload=None, pair=""):
         if self._closing:
             return
         try:
-            self._on_event(kind, payload)
+            self._on_event(kind, payload, pair)
         except Exception:
             log.exception("flow: handling %s failed", kind)
 
@@ -445,46 +472,54 @@ class Link:
         self._loop.stop()
 
     def _teardown(self):
-        if self._dialer is not None:
-            self._dialer.cancel()
-            self._dialer = None
+        for dialer in self._dialers.values():
+            dialer.cancel()
+        self._dialers = {}
         if self._server is not None:
             self._server.close()
             self._server = None
-        if self._conn is not None:
-            self._conn.close()
+        for conn in list(self._conns.values()):
+            conn.close()
 
     def _apply(self, settings):
         if settings == self._settings:
             return
         self._teardown()
         self._settings = settings
-        self._found = None
+        self._keys = {pair: key for pair, key, _address in settings[1]} if settings else {}
+        self._found = {}
         self._sync_udp()
         if settings is None:
             return
-        key, port, peer = settings
-        self._loop.create_task(self._listen(key, port))
-        self._dialer = self._loop.create_task(self._dial(key, port, peer))
+        port, entries = settings
+        self._loop.create_task(self._listen(port))
+        for pair, key, address in entries:
+            self._dialers[pair] = self._loop.create_task(self._dial(pair, key, port, address))
 
-    def _set_status(self, status):
-        if status != self._status:
-            self._status = status
-            self._send(dict(status, t="status"))
+    def _full_status(self, pair):
+        return dict(self._status, **self._status_for.get(pair, {}))
 
-    def _send(self, message, data=None):
-        if self._conn is not None:
+    def _set_status(self, status, per_pair):
+        before = {pair: self._full_status(pair) for pair in self._conns}
+        self._status, self._status_for = status, per_pair
+        for pair, conn in list(self._conns.items()):
+            now = self._full_status(pair)
+            if now != before[pair]:
+                self._send(dict(now, t="status"), None, pair)
+
+    def _send(self, message, data=None, pair=None):
+        for conn in ([self._conns[pair]] if pair in self._conns else [] if pair else list(self._conns.values())):
             try:
-                self._conn.send(message, data)
+                conn.send(message, data)
             except _LOST as e:
                 log.debug("flow: could not send: %s", e)
 
-    async def _listen(self, key, port):
+    async def _listen(self, port):
         settings = self._settings
         try:
             server = await asyncio.start_server(
                 lambda reader, writer: self._session(reader, writer, dialed=False), host=None, port=port,
-                ssl=_context(key, server=True), ssl_handshake_timeout=HANDSHAKE, limit=MAX_LINE)
+                ssl=_context(self._keys, server=True), ssl_handshake_timeout=HANDSHAKE, limit=MAX_LINE)
         except (OSError, ssl.SSLError) as e:
             log.warning("flow: cannot listen on port %d: %s", port, e)
             self._emit("problem", str(e))
@@ -496,12 +531,12 @@ class Link:
         self._emit("problem", "")
         log.info("flow: listening on port %d", port)
 
-    async def _dial(self, key, port, peer):
-        given = split_address(peer, port) if peer else None
+    async def _dial(self, pair, key, port, address):
+        given = split_address(address, port) if address else None
         context = _context(key, server=False)
         while True:
-            for host, peer_port in [target for target in (given, self._found) if target and target[0]]:
-                if self._conn is not None:
+            for host, peer_port in [target for target in (given, self._found.get(pair)) if target and target[0]]:
+                if pair in self._conns:
                     break
                 try:
                     reader, writer = await asyncio.wait_for(asyncio.open_connection(
@@ -509,90 +544,114 @@ class Link:
                 except _LOST as e:
                     log.debug("flow: %s:%d not reachable: %s", host, peer_port, e)
                 else:
-                    await self._session(reader, writer, dialed=True)
+                    await self._session(reader, writer, dialed=True, pair=pair)
             await asyncio.sleep(RETRY)
 
     def _adopt(self, conn):
-        """Make ``conn`` the link in use, unless it is the loser of two calls that crossed."""
-        current = self._conn
+        """Make ``conn`` the link in use with its computer, unless it is the loser of two calls that crossed."""
+        current = self._conns.get(conn.pair)
         if current is not None and current.dialed != conn.dialed and current.dialer < conn.dialer:
             return False  # each side called the other at once: both keep the call of the smaller id
-        self._conn = conn
+        self._conns[conn.pair] = conn
         if current is not None:
             current.close()
-            conn.send(dict(self._status, t="status"))  # what was said on the old call since this one began
+            conn.send(dict(self._full_status(conn.pair), t="status"))  # what was said on the old call since this one began
         return True
 
-    async def _session(self, reader, writer, dialed):
+    def _proof(self, conn, pair):
+        """Shows that the caller holds the key of the pairing it names: a listener with several keys has
+        let it in on the strength of one of them, and this ties the name to that very connection."""
+        channel = conn.writer.get_extra_info("ssl_object")
+        binding = (channel.get_channel_binding("tls-unique") if channel is not None else None) or b""
+        return hmac.new(_secret(self._keys[pair]), b"mxoptions-flow-hello:" + binding, hashlib.sha256).hexdigest()
+
+    async def _session(self, reader, writer, dialed, pair=None):
         conn = _Connection(reader, writer, dialed)
         try:
             # The side that calls speaks first: it is either the link, or a file transfer on a connection of its own.
             if dialed:
-                conn.send(self._hello())
+                conn.pair = pair
+                conn.send(dict(self._hello(pair), mac=self._proof(conn, pair)))
             hello = await asyncio.wait_for(conn.read(), HANDSHAKE)
             if hello.get("v") != PROTOCOL or hello.get("id") == self.id:
                 return  # another version of the protocol, or this computer reached itself
-            if not dialed and hello.get("t") == "files-stream":
-                await self._receive_files(conn, hello)
-                return
+            if not dialed:
+                pair = hello.get("pair")
+                if pair not in self._keys or not hmac.compare_digest(str(hello.get("mac")), self._proof(conn, pair)):
+                    return
+                conn.pair = pair
+                if hello.get("t") == "files-stream":
+                    await self._receive_files(conn, hello)
+                    return
             if hello.get("t") != "hello":
                 return
             if not dialed:
-                conn.send(self._hello())
+                conn.send(self._hello(pair))
             conn.dialer = self.id if dialed else str(hello.get("id"))
             port = hello.get("port")
             conn.port = port if isinstance(port, int) and not isinstance(port, bool) and 0 < port < 65536 else None
             if not self._adopt(conn):
                 return
             log.info("flow: linked with %s", hello.get("name") or "the other computer")
-            self._emit("up", hello)
+            self._emit("up", hello, pair)
             while True:
                 try:
                     message = await asyncio.wait_for(conn.read(), PING_INTERVAL)
                 except asyncio.TimeoutError:
-                    if time.monotonic() - conn.heard > DEAD_AFTER:
+                    silent = time.monotonic() - conn.heard
+                    if silent > DEAD_AFTER:
                         log.info("flow: the other computer went silent")
                         return
+                    if silent > QUIET_AFTER and not conn.quiet:
+                        conn.quiet = True
+                        log.info("flow: no answer from the other computer for %.0f s", silent)
+                        self._emit("quiet", True, pair)
                     conn.send({"t": "ping"})
                     continue
+                if conn.quiet:
+                    conn.quiet = False
+                    log.info("flow: the other computer answers again")
+                    self._emit("quiet", False, pair)
                 data = await conn.read_data(message)  # never cut short: what follows would make no sense
                 kind = message.get("t")
                 if kind == "ping":
                     conn.send({"t": "pong"})
                 elif kind == "status":
-                    self._emit("status", message)
+                    self._emit("status", message, pair)
                 elif kind == "files":
-                    self._offered(conn, message)
-                elif kind in ("files-ok", "files-no"):
+                    self._offered(conn, message, data)
+                elif kind in ("files-ok", "files-no", "files-got"):
                     self._answered(conn, kind, message)
                 elif kind != "pong":
                     if data:
                         message["data"] = data
-                    self._emit("message", message)
+                    self._emit("message", message, pair)
         except _LOST as e:
             log.debug("flow: link lost: %s", e)
         finally:
             conn.close()
-            if self._conn is conn:
-                self._conn = None
-                if self._receiver.busy and self._arriving is None:  # promised files that had not begun to arrive
-                    self._receiver.abort()
-                    self._emit("files-declined", "failed")
-                self._outgoing = None
+            if self._conns.get(conn.pair) is conn:
+                del self._conns[conn.pair]
+                if self._receiver.busy and self._arriving is None and self._promised == conn.pair:
+                    self._receiver.abort()  # promised files that had not begun to arrive
+                    self._emit("files-declined", "failed", conn.pair)
+                if self._outgoing is not None and self._outgoing["pair"] == conn.pair:
+                    self._outgoing = None
                 log.info("flow: link down")
-                self._emit("down")
+                self._emit("down", None, conn.pair)
 
-    def _hello(self):
+    def _hello(self, pair):
         settings = self._settings
-        return dict(self._status, t="hello", v=PROTOCOL, id=self.id, port=settings[1] if settings else None)
+        return dict(self._full_status(pair), t="hello", v=PROTOCOL, id=self.id, pair=pair, port=settings[0] if settings else None)
 
     # -- files ------------------------------------------------------------------------
     # They are offered and accepted over the link, and then travel on a connection of their own, so
     # that a large file does not keep anything else waiting: the pointer crossing, the clipboard,
     # the link's own "are you there". A transfer under way outlives a link that drops.
 
-    def _offered(self, conn, message):
-        """The other computer wants to send files: say whether they will be taken."""
+    def _offered(self, conn, message, data=b""):
+        """The other computer wants to send files: say whether they will be taken. A few small ones
+        come with the offer itself and are in place at once."""
         transfer, items = message.get("id"), message.get("items")
         try:
             self._receiver.begin(transfer, items, self._receive_limit)
@@ -600,16 +659,36 @@ class Link:
             log.info("flow: files not taken: %s", e)
             conn.send({"t": "files-no", "id": transfer, "why": str(e)})
             if str(e) not in ("off", "busy"):
-                self._emit("files-declined", str(e))  # the user is at this computer now: this is where to say so
+                self._emit("files-declined", str(e), conn.pair)  # the user is at this computer now: this is where to say so
             return
         except OSError as e:
             log.warning("flow: could not make room for the files: %s", e)
             self._receiver.abort()
             conn.send({"t": "files-no", "id": transfer, "why": "no space"})
-            self._emit("files-declined", "no space")
+            self._emit("files-declined", "no space", conn.pair)
             return
-        conn.send({"t": "files-ok", "id": transfer})
-        self._emit("files-coming", {"count": self._receiver.count, "total": self._receiver.total})
+        self._promised = conn.pair
+        if not message.get("inline"):
+            conn.send({"t": "files-ok", "id": transfer})
+            self._emit("files-coming", {"count": self._receiver.count, "total": self._receiver.total}, conn.pair)
+            return
+        try:  # the bytes of all the files, one after the other in the order of the list
+            start = 0
+            for index, item in enumerate(items):
+                size = 0 if item.get("dir") else item["size"]
+                if size:
+                    self._receiver.chunk(transfer, index, data[start:start + size])
+                    start += size
+            arrived = self._receiver.end(transfer)
+        except (flow_files.Refused, OSError) as e:
+            log.info("flow: the files did not arrive: %s", e)
+            self._receiver.abort()
+            conn.send({"t": "files-no", "id": transfer, "why": "failed"})
+            self._emit("files-declined", "failed", conn.pair)
+            return
+        conn.send({"t": "files-got", "id": transfer})
+        log.info("flow: %d file(s) arrived, %d bytes", arrived["count"], arrived["total"])
+        self._emit("files", arrived, conn.pair)
 
     async def _receive_files(self, conn, hello):
         """The connection the promised files arrive on."""
@@ -631,13 +710,13 @@ class Link:
                     if now - reported >= PROGRESS_INTERVAL:
                         reported = now
                         self._emit("files-progress", {"done": self._receiver.done, "total": self._receiver.total,
-                                                      "count": self._receiver.count, "sending": False})
+                                                      "count": self._receiver.count, "sending": False}, conn.pair)
                 elif kind == "files-end":
                     arrived = self._receiver.end(transfer)
                     conn.send({"t": "files-got"})
                     await conn.writer.drain()
                     log.info("flow: %d file(s) arrived, %d bytes", arrived["count"], arrived["total"])
-                    self._emit("files", arrived)
+                    self._emit("files", arrived, conn.pair)
                     return
                 else:  # the sender gave up
                     why = "cancelled"
@@ -653,13 +732,33 @@ class Link:
                 self._arriving = None
         if self._receiver.transfer == transfer:
             self._receiver.abort()
-            self._emit("files-declined", "cancelled" if conn.cancelled else why)
+            self._emit("files-declined", "cancelled" if conn.cancelled else why, conn.pair)
 
-    def _offer_files(self, items, sources):
-        if self._conn is None or self._outgoing is not None or self._sending is not None:
+    def _offer_files(self, items, sources, pair=None):
+        if pair is None and len(self._conns) == 1:
+            pair = next(iter(self._conns))
+        conn = self._conns.get(pair)
+        if conn is None or self._outgoing is not None or self._sending is not None:
             return
-        self._outgoing = {"id": secrets.token_hex(6), "items": items, "sources": sources}
-        self._conn.send({"t": "files", "id": self._outgoing["id"], "items": items})
+        self._outgoing = {"id": secrets.token_hex(6), "items": items, "sources": sources, "pair": pair}
+        if flow_files.total_size(items) <= INLINE_FILES:
+            try:  # small enough to go along at once
+                data = b""
+                for item, source in zip(items, sources):
+                    if source is not None:
+                        with open(source, "rb") as handle:
+                            piece = handle.read(item["size"])
+                        if len(piece) != item["size"]:
+                            raise OSError(f"{source} became shorter")
+                        data += piece
+            except OSError as e:
+                log.warning("flow: could not read the files: %s", e)
+                self._outgoing = None
+                self._emit("files-refused", "failed", pair)
+                return
+            conn.send({"t": "files", "id": self._outgoing["id"], "items": items, "inline": True}, data)
+            return
+        conn.send({"t": "files", "id": self._outgoing["id"], "items": items})
 
     def _answered(self, conn, kind, message):
         outgoing = self._outgoing
@@ -668,23 +767,30 @@ class Link:
         self._outgoing = None
         if kind == "files-no":
             log.info("flow: the other computer will not take the files: %s", message.get("why"))
-            self._emit("files-refused", str(message.get("why") or ""))
+            self._emit("files-refused", str(message.get("why") or ""), conn.pair)
+            return
+        if kind == "files-got":  # they went along with the offer and are in place
+            count = sum(1 for source in outgoing["sources"] if source is not None)
+            log.info("flow: sent %d file(s)", count)
+            self._emit("files-sent", {"count": count, "total": flow_files.total_size(outgoing["items"])}, conn.pair)
             return
         peer = conn.writer.get_extra_info("peername")
-        if self._settings is None or not peer or not conn.port:
-            self._emit("files-refused", "failed")
+        if conn.pair not in self._keys or not peer or not conn.port:
+            self._emit("files-refused", "failed", conn.pair)
             return
-        self._sending = self._loop.create_task(self._send_files(peer[0], conn.port, self._settings[0], outgoing))
+        self._sending = self._loop.create_task(self._send_files(peer[0], conn.port, conn.pair, outgoing))
 
-    async def _send_files(self, address, port, key, outgoing):
+    async def _send_files(self, address, port, pair, outgoing):
         transfer, total = outgoing["id"], flow_files.total_size(outgoing["items"])
         count = sum(1 for source in outgoing["sources"] if source is not None)
         writer, why = None, "failed"
         try:
             reader, writer = await asyncio.wait_for(asyncio.open_connection(
-                address, port, ssl=_context(key, server=False), ssl_handshake_timeout=HANDSHAKE, limit=MAX_LINE), HANDSHAKE + 3.0)
+                address, port, ssl=_context(self._keys[pair], server=False), ssl_handshake_timeout=HANDSHAKE, limit=MAX_LINE),
+                HANDSHAKE + 3.0)
             conn = _Connection(reader, writer, True)
-            conn.send({"t": "files-stream", "v": PROTOCOL, "id": self.id, "transfer": transfer})
+            conn.send({"t": "files-stream", "v": PROTOCOL, "id": self.id, "transfer": transfer, "pair": pair,
+                       "mac": self._proof(conn, pair)})
             done, reported = 0, 0.0
             for index, (item, source) in enumerate(zip(outgoing["items"], outgoing["sources"])):
                 if source is None:
@@ -702,13 +808,13 @@ class Link:
                         now = time.monotonic()
                         if now - reported >= PROGRESS_INTERVAL:
                             reported = now
-                            self._emit("files-progress", {"done": done, "total": total, "count": count, "sending": True})
+                            self._emit("files-progress", {"done": done, "total": total, "count": count, "sending": True}, pair)
             conn.send({"t": "files-end"})
             answer = await asyncio.wait_for(conn.read(), STREAM_TIMEOUT)  # it says so when everything is in place
             if answer.get("t") != "files-got":
                 raise OSError("the other computer did not confirm the files")
             log.info("flow: sent %d file(s)", count)
-            self._emit("files-sent", {"count": count, "total": total})
+            self._emit("files-sent", {"count": count, "total": total}, pair)
             writer.close()
             return
         except asyncio.CancelledError:
@@ -718,13 +824,13 @@ class Link:
                     writer.write(b'{"t":"files-abort"}\n')
                 except Exception:
                     pass
-        except _LOST as e:
+        except (*_LOST, KeyError) as e:
             log.warning("flow: sending the files failed: %s", e)
         finally:
             self._sending = None
         if writer is not None:
             writer.close()
-        self._emit("files-refused", why)
+        self._emit("files-refused", why, pair)
 
     def _cancel_files(self):
         if self._sending is not None:
@@ -734,7 +840,7 @@ class Link:
             self._arriving.close()  # the loop reading from it ends, and what arrived so far is dropped
         elif self._receiver.busy:
             self._receiver.abort()
-            self._emit("files-declined", "cancelled")
+            self._emit("files-declined", "cancelled", self._promised)
 
     # -- finding each other, and pairing -----------------------------------------------------
 
@@ -775,9 +881,10 @@ class Link:
             if self._pairing is not None and self._pairing["server"] is not None:  # not before it can be answered
                 beacons.append(offer_beacon(self.id, self._pairing["info"].get("name", ""), self._pairing["port"]))
             now = time.monotonic()
-            if self._settings is not None and self._conn is None and now - last_here >= HERE_INTERVAL:
+            if self._settings is not None and now - last_here >= HERE_INTERVAL:
                 last_here = now
-                beacons.append(here_beacon(self._settings[0], self.id, self._settings[1]))
+                beacons.extend(here_beacon(key, self.id, self._settings[0])
+                               for pair, key, _address in self._settings[1] if pair not in self._conns)
             for beacon in beacons:
                 data = json.dumps(beacon, separators=(",", ":")).encode("utf-8")
                 for address in broadcast_addresses():
@@ -788,15 +895,15 @@ class Link:
             await asyncio.sleep(OFFER_INTERVAL)
 
     def _datagram(self, data, addr):
-        beacon = read_beacon(data, self._settings[0] if self._settings else None)
+        beacon = read_beacon(data, self._keys)
         if beacon is None or beacon["id"] == self.id:
             return
         if beacon["t"] == "pair":
             if self._watching:
                 self._emit("offer", {"id": beacon["id"], "name": beacon["name"], "address": addr[0], "port": beacon["port"]})
-        elif self._conn is None and self.id < beacon["id"]:
+        elif beacon["pair"] not in self._conns and self.id < beacon["id"]:
             # Both hear each other's call; only one of the two acts on it, or their calls would cross every time.
-            self._found = (addr[0], beacon["port"])
+            self._found[beacon["pair"]] = (addr[0], beacon["port"])
 
     def _watch_offers(self, wanted):
         self._watching = wanted
@@ -866,7 +973,8 @@ class Link:
             address = writer.get_extra_info("peername")[0]
             log.info("flow: paired with %s", their_info.get("name") or address)
             self._emit("paired", {"key": flow_pairing.pairing_key(shared), "address": address, "host": True,
-                                  "name": str(their_info.get("name") or "")[:64], "port": their_info.get("port")})
+                                  "name": str(their_info.get("name") or "")[:64], "port": their_info.get("port"),
+                                  "id": their_info.get("id")})
         except _LOST as e:
             log.debug("flow: pairing attempt dropped: %s", e)
         finally:
@@ -893,7 +1001,8 @@ class Link:
             shared = client.confirm(bytes.fromhex(str(reply.get("M2"))), flow_pairing.info_bytes(their_info))
             log.info("flow: paired with %s", their_info.get("name") or address)
             self._emit("paired", {"key": flow_pairing.pairing_key(shared), "address": address, "host": False,
-                                  "name": str(their_info.get("name") or "")[:64], "port": their_info.get("port")})
+                                  "name": str(their_info.get("name") or "")[:64], "port": their_info.get("port"),
+                                  "id": their_info.get("id")})
         except flow_pairing.Mismatch:
             self._emit("pair-failed", "code")
         except _LOST as e:

@@ -471,6 +471,47 @@ class SwatchRow(QWidget):
         self.custom.setChecked(True)
 
 
+class IconChoice(QWidget):
+    """A few looks to pick one from, each shown as a small picture with its name as a tooltip."""
+
+    selected = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._layout = QHBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(6)
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+        self._buttons = {}
+
+    def set_options(self, options):
+        """``options``: [(value, name, QIcon)]."""
+        current = next((value for value, button in self._buttons.items() if button.isChecked()), None)
+        for button in self._buttons.values():
+            self._group.removeButton(button)
+            button.deleteLater()
+        self._buttons = {}
+        for value, name, icon in options:
+            button = QPushButton()
+            button.setObjectName("iconChoice")
+            button.setCheckable(True)
+            button.setIcon(icon)
+            button.setIconSize(QSize(26, 26))
+            button.setFixedSize(44, 44)
+            button.setToolTip(name)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(lambda _checked=False, v=value: self.selected.emit(v))
+            self._group.addButton(button)
+            self._layout.addWidget(button)
+            self._buttons[value] = button
+        self.set_value(current)
+
+    def set_value(self, value):
+        if value in self._buttons:
+            self._buttons[value].setChecked(True)
+
+
 def ui_scale():
     """How much wider than the reference font the application font is (1.0 .. 1.3).
 

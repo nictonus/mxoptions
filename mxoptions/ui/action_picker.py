@@ -2,15 +2,15 @@
 
 import copy
 
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import QPointF, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
     QButtonGroup, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget,
 )
 
-from .. import actions, config
+from .. import actions, config, gestures
 from ..i18n import _
-from . import ring
+from . import ring, theme
 from .editors import MacroDialog, ScriptDialog
 from .recorder import ShortcutRecorder
 from .widgets import ElidedButton, ElidedLabel, InfoButton, titled, ui_scale
@@ -23,6 +23,37 @@ GESTURE_LABELS = {
     "right": "Swipe right",
 }
 GESTURE_ARROWS = {"tap": "●", "up": "↑", "down": "↓", "left": "←", "right": "→"}
+SHAPE_LABELS = {
+    "down_right": "Down, then right", "down_left": "Down, then left", "up_right": "Up, then right", "up_left": "Up, then left",
+    "right_down": "Right, then down", "right_up": "Right, then up", "left_down": "Left, then down", "left_up": "Left, then up",
+    "up_down": "Up and back", "down_up": "Down and back", "left_right": "Left and back", "right_left": "Right and back",
+    "circle_cw": "Circle, clockwise", "circle_ccw": "Circle, anticlockwise",
+    "zigzag_h": "Shake sideways", "zigzag_v": "Shake up and down",
+}
+
+
+def shape_icon(name, size=26):
+    """A little picture of a shape: its line, a dot where it starts and an arrowhead where it ends."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    points = [QPointF(x * size, y * size) for x, y in gestures.outline(name)]
+    ink = QColor(theme.ACCENT_INK)
+    painter.setPen(QPen(ink, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    painter.drawPolyline(QPolygonF(points))
+    painter.setBrush(ink)
+    painter.drawEllipse(points[0], 1.6, 1.6)
+    tip, before = points[-1], points[-2]
+    along = QPointF(tip.x() - before.x(), tip.y() - before.y())
+    length = max(1e-6, (along.x() ** 2 + along.y() ** 2) ** 0.5)
+    ux, uy = along.x() / length, along.y() / length
+    wing = size * 0.17
+    painter.drawPolygon(QPolygonF([
+        tip, QPointF(tip.x() - ux * wing - uy * wing * 0.6, tip.y() - uy * wing + ux * wing * 0.6),
+        QPointF(tip.x() - ux * wing + uy * wing * 0.6, tip.y() - uy * wing - ux * wing * 0.6)]))
+    painter.end()
+    return QIcon(pixmap)
 
 
 class ActionList(QWidget):
@@ -246,7 +277,7 @@ class ActionPicker(QFrame):
         self.setObjectName("picker")
         self.setFixedWidth(int(320 * ui_scale()))
         self._action = None
-        self._direction = None
+        self._slot = None  # what of a gesture button is being edited: "tap", a direction or a shape
         outer = QVBoxLayout(self)
         outer.setContentsMargins(18, 20, 12, 14)
         outer.setSpacing(10)
@@ -286,9 +317,26 @@ class ActionPicker(QFrame):
             inner.addWidget(name)
             inner.addWidget(value, 1)
             row.setMinimumHeight(38)
-            row.clicked.connect(lambda _checked=False, d=direction: self._edit_direction(d))
+            row.clicked.connect(lambda _checked=False, d=direction: self._edit_slot(d))
             block.addWidget(row)
             self._gesture_rows[direction] = value
+        shapes = QPushButton()  # one more row: the shapes that can be drawn with the button held
+        shapes.setObjectName("chip")
+        shapes.setCursor(Qt.CursorShape.PointingHandCursor)
+        inner = QHBoxLayout(shapes)
+        inner.setContentsMargins(12, 8, 12, 8)
+        name = QLabel("✎   " + _("Shapes"))
+        name.setObjectName("chipTitle")
+        self.shapes_value = ElidedLabel()
+        self.shapes_value.setObjectName("chipValue")
+        self.shapes_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        for label in (name, self.shapes_value):
+            label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        inner.addWidget(name)
+        inner.addWidget(self.shapes_value, 1)
+        shapes.setMinimumHeight(38)
+        shapes.clicked.connect(lambda: self.stack.setCurrentIndex(3))
+        block.addWidget(shapes)
         layout.addWidget(self.gesture_block)
 
         self.list = ActionList(exclude=frozenset() if allow_button_actions else actions.BUTTON_ONLY)
@@ -304,7 +352,7 @@ class ActionPicker(QFrame):
         back = QPushButton("‹  " + _("Back"))
         back.setObjectName("flat")
         back.setCursor(Qt.CursorShape.PointingHandCursor)
-        back.clicked.connect(lambda: self.stack.setCurrentIndex(0))
+        back.clicked.connect(lambda: self.stack.setCurrentIndex(3 if self._slot in gestures.SHAPES else 0))
         layout.addWidget(back, 0, Qt.AlignmentFlag.AlignLeft)
         self.sub_title = QLabel()
         self.sub_title.setObjectName("pickerTitle")
@@ -334,6 +382,61 @@ class ActionPicker(QFrame):
         layout.addStretch(1)
         self.stack.addWidget(fixed)
 
+        # page 3: the shapes of a gesture button, each with its action
+        drawn = QWidget()
+        layout = QVBoxLayout(drawn)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        back = QPushButton("‹  " + _("Back"))
+        back.setObjectName("flat")
+        back.setCursor(Qt.CursorShape.PointingHandCursor)
+        back.clicked.connect(lambda: self.stack.setCurrentIndex(0))
+        layout.addWidget(back, 0, Qt.AlignmentFlag.AlignLeft)
+        heading = QLabel(_("Shapes"))
+        heading.setObjectName("pickerTitle")
+        about = InfoButton(_(
+            "Hold the button and draw: a corner, there and back, a circle, a shake. A shape that has an action here "
+            "runs it when the button comes up. While any shape has one, plain swipes of this button are also judged "
+            "when it comes up, not half-way; with repeating swipes shapes are not read at all."))
+        line = titled(heading, about)
+        line.setContentsMargins(0, 0, 16, 0)
+        layout.addLayout(line)
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        area.setFrameShape(QFrame.Shape.NoFrame)
+        area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        holder = QWidget()
+        rows = QVBoxLayout(holder)
+        rows.setContentsMargins(0, 0, 16, 0)
+        rows.setSpacing(4)
+        self._shape_rows = {}
+        self._shape_icons = None  # the theme they were drawn for
+        for shape in gestures.SHAPES:
+            row = QPushButton()
+            row.setObjectName("chip")
+            row.setCursor(Qt.CursorShape.PointingHandCursor)
+            row.setIconSize(QSize(26, 26))
+            inner = QHBoxLayout(row)
+            inner.setContentsMargins(46, 6, 12, 6)  # room for the picture, which the button draws itself
+            texts = QVBoxLayout()
+            texts.setSpacing(0)
+            name = QLabel(_(SHAPE_LABELS[shape]))
+            name.setObjectName("chipTitle")
+            value = ElidedLabel()
+            value.setObjectName("chipValue")
+            for label in (name, value):
+                label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+                texts.addWidget(label)
+            inner.addLayout(texts, 1)
+            row.setMinimumHeight(48)
+            row.clicked.connect(lambda _checked=False, k=shape: self._edit_slot(k))
+            rows.addWidget(row)
+            self._shape_rows[shape] = (row, value)
+        rows.addStretch(1)
+        area.setWidget(holder)
+        layout.addWidget(area, 1)
+        self.stack.addWidget(drawn)
+
     def show_fixed(self, title, value, text):
         """Describe a control whose function is built into the mouse."""
         self._action = None
@@ -357,6 +460,14 @@ class ActionPicker(QFrame):
         if is_gestures:
             for direction, label in self._gesture_rows.items():
                 label.setText(actions.describe(action.get(direction)))
+            drawn = action.get("shapes") or {}
+            self.shapes_value.setText(_("{} with an action").format(len(drawn)) if drawn else _("None yet"))
+            if self._shape_icons != theme.REVISION:
+                self._shape_icons = theme.REVISION
+                for shape, (row, _value) in self._shape_rows.items():
+                    row.setIcon(shape_icon(shape))
+            for shape, (_row, value) in self._shape_rows.items():
+                value.setText(actions.describe(drawn[shape]) if shape in drawn else _("No action"))
 
     def _picked(self, action):
         if action.get("type") == "gestures":
@@ -367,15 +478,30 @@ class ActionPicker(QFrame):
         self._refresh()
         self.changed.emit(copy.deepcopy(action))
 
-    def _edit_direction(self, direction):
-        self._direction = direction
-        self.sub_title.setText(_(GESTURE_LABELS[direction]))
+    def _edit_slot(self, slot):
+        """Choose the action for one direction, the tap, or one shape of a gesture button."""
+        self._slot = slot
+        if slot in gestures.SHAPES:
+            self.sub_title.setText(_(SHAPE_LABELS[slot]))
+            current = (self._action.get("shapes") or {}).get(slot) or {"type": "none"}
+        else:
+            self.sub_title.setText(_(GESTURE_LABELS[slot]))
+            current = self._action.get(slot)
         self.sub_list.search.clear()
-        self.sub_list.set_current(self._action.get(direction))
+        self.sub_list.set_current(current)
         self.stack.setCurrentIndex(1)
 
     def _sub_picked(self, action):
-        self._action[self._direction] = action
+        if self._slot in gestures.SHAPES:
+            drawn = self._action.setdefault("shapes", {})
+            if action.get("type") == "none":
+                drawn.pop(self._slot, None)
+            else:
+                drawn[self._slot] = action
+            if not drawn:
+                self._action.pop("shapes", None)
+        else:
+            self._action[self._slot] = action
         self.sub_list.set_current(action)
         self._refresh()
         self.changed.emit(copy.deepcopy(self._action))

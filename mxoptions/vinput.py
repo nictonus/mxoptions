@@ -37,6 +37,12 @@ class _Device(UInput):
     event node to read it back, and waits two seconds for the permission to do so, which an
     ordinary user never gets."""
 
+    def __init__(self, *args, **kwargs):
+        # No force feedback unless asked for: python-evdev would announce room for effects on every device,
+        # and a device that claims force feedback is not taken for the plain keyboard or pointer it is.
+        kwargs.setdefault("max_effects", 0)
+        super().__init__(*args, **kwargs)
+
     def _find_device(self, *_args):
         return None
 
@@ -164,8 +170,9 @@ class AbsolutePointer:
 
     def __init__(self):
         axis = AbsInfo(value=0, min=0, max=self.RANGE - 1, fuzz=0, flat=0, resolution=0)
-        # The buttons are never pressed; they are what makes this a pointer in the eyes of the system.
-        self._dev = _Device({e.EV_KEY: [e.BTN_LEFT, e.BTN_RIGHT], e.EV_ABS: [(e.ABS_X, axis), (e.ABS_Y, axis)]},
+        # The buttons are never pressed; they are what makes this a pointer in the eyes of the system. It takes
+        # exactly these three: with fewer the kernel lists the device as a joystick, and gamepad testers show it.
+        self._dev = _Device({e.EV_KEY: [e.BTN_LEFT, e.BTN_RIGHT, e.BTN_MIDDLE], e.EV_ABS: [(e.ABS_X, axis), (e.ABS_Y, axis)]},
                             name="MX Options virtual pointer", vendor=0x1D6B, product=0x4D5A)
         self._last = None
 

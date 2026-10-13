@@ -7,7 +7,7 @@ from PySide6.QtCore import QEasingCurve, QPointF, QRectF, Qt, QTimer, QVariantAn
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QButtonGroup, QPushButton, QVBoxLayout, QWidget
 
-from . import mouse_model, mouse_photo, mouse_render, theme
+from . import mouse_generic, mouse_model, mouse_photo, mouse_render, theme
 from .widgets import ElidedLabel, ui_scale
 
 log = logging.getLogger(__name__)
@@ -69,6 +69,8 @@ class MouseView(QWidget):
         self._pressed = frozenset()
         self._hover = None
         self._style = "photo" if mouse_photo.available() else mouse_model.DEFAULT_STYLE
+        self._asked = self._style   # the look the settings ask for; ``_style`` is what this mouse gets
+        self._family = "mx4"        # which picture fits the mouse: see device.family()
         self._color = mouse_photo.COLORS[0]
         # The view moves from one camera angle to another as the selection changes.
         self._from_view = self._to_view = mouse_model.VIEWS[None]
@@ -117,10 +119,26 @@ class MouseView(QWidget):
 
     def set_style(self, style, color=None):
         """``style`` is "photo" or one of the 3D styles; ``color`` picks the body colour of the photo."""
-        if style == "photo" and not mouse_photo.available():
+        if style == "photo" or style in mouse_model.STYLES:
+            self._asked = style
+        self._resolve(color if color in mouse_photo.COLORS else self._color)
+
+    def set_family(self, family):
+        """Which mouse is connected: "mx4", "master" (an earlier MX Master) or "other" (see device.family)."""
+        if family != self._family:
+            self._family = family
+            self._resolve(self._color)
+
+    def _resolve(self, color):
+        """Pick what is drawn: the pictures are of the MX Master 4, the 3D model also passes for the
+        MX Masters before it, and any other mouse gets a plain drawing of its own buttons."""
+        if self._family == "other":
+            style = "generic"
+        elif self._asked == "photo" and (self._family != "mx4" or not mouse_photo.available()):
             style = mouse_model.DEFAULT_STYLE
-        color = color if color in mouse_photo.COLORS else self._color
-        if (style == "photo" or style in mouse_model.STYLES) and (style, color) != (self._style, self._color):
+        else:
+            style = self._asked
+        if (style, color) != (self._style, self._color):
             self._style, self._color = style, color
             self._settle.start()
             self.update()
@@ -193,7 +211,14 @@ class MouseView(QWidget):
         area = QRectF(left, 0, self.width() - left, self.height())
         return mouse_photo.fit(area.adjusted(area.width() * 0.07, area.height() * 0.045, -area.width() * 0.07, -area.height() * 0.045))
 
+    def _generic_rect(self):
+        left = chip_width() + MODEL_GAP
+        area = QRectF(left, 0, self.width() - left, self.height())
+        return mouse_generic.fit(area.adjusted(area.width() * 0.1, area.height() * 0.06, -area.width() * 0.1, -area.height() * 0.06))
+
     def _control_at(self, pos):
+        if self._style == "generic":
+            return mouse_generic.control_at(self._generic_rect(), pos, self._shown())
         if self._style != "photo":
             return None
         return mouse_photo.control_at(self._photo_rect(), pos, self._shown())
@@ -281,7 +306,12 @@ class MouseView(QWidget):
         target = self._camera(self._to_view)
         ready = self._studio() and self._key(self._to_view) in self._renders
 
-        if photo:
+        if self._style == "generic":
+            rect = self._generic_rect()
+            mouse_generic.paint(painter, rect, self._selected, self._pressed, shown, self._hover)
+            anchors = {key: mouse_generic.anchor(rect, key) for key in shown}
+            photo = True  # like the photo, it stays clean: only the control in question gets a line
+        elif photo:
             rect = self._photo_rect()
             mouse_photo.paint(painter, rect, self._color, self._selected, self._pressed, shown, self._hover, self._stage())
             anchors = {key: mouse_photo.anchor(rect, key) for key in shown}
