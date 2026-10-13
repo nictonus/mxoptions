@@ -163,13 +163,15 @@ at the mouse:
 a driver made for that; the one used is [ViGEmBus](https://github.com/nefarius/ViGEmBus/releases),
 which you install once (it is no longer developed, and still the one such tools use). The Windows
 build carries its client library (ViGEmClient.dll, MIT licence, fetched and checked when the build is
-made). Without the driver the settings say so; with it, rumble has not been run yet.
+made). Without the driver the settings say so. With ViGEmBus 1.22.0 it was run with a test program
+standing in for a game: what that sent to the controller's motors through XInput was played on the
+mouse. No game itself was tried.
 
-Not tried, because it takes a hand on the mouse: the buttons, gestures and wheels themselves (the
-same code as on Linux), and pushing the pointer past the screen edge to cross. Not tried either: the
-Bolt receiver (written, never plugged in there) and game rumble (see above). Not there yet: letting
-Flow be found by other computers (Windows' firewall asks about that; the Windows side calls the
-other computer itself, which needs no permission).
+Used by hand on Windows so far: the main buttons, the haptic panel opening the ring, and crossing at the
+screen edge to a Linux computer and back. Not tried: gestures and the wheels by hand (the same code as
+on Linux), the Bolt receiver (written, never plugged in there), and game rumble in a game itself.
+Not there yet: letting Flow be found by other computers (Windows' firewall asks about that; the
+Windows side calls the other computer itself, which needs no permission).
 
 ## Installing
 
