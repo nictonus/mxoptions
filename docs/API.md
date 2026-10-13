@@ -18,6 +18,23 @@ Everything structured (actions, bubbles, settings) travels as **JSON text**, so 
 usable from a shell as from a language binding. Methods report failure by returning `false` or an
 empty string, never by a D-Bus error.
 
+## Without D-Bus: `mxoptions --call`
+
+The methods and properties below can also be asked of the running program through the program
+itself, which needs no D-Bus tool and is the way in on Windows, where there is no session bus:
+
+```sh
+mxoptions --call PlayHaptic knock     # true
+mxoptions --call Battery              # 82
+mxoptions --call Trigger play_pause
+mxoptions --call Get pointer.dpi
+```
+
+The answer is printed (a list one item to a line). The exit status is 0 when the call was made, 2
+when it could not be (no such call, a wrong argument, or the interface switched off in the
+settings) and 3 when MX Options is not running. Signals are only on D-Bus. Run from a source tree
+it is `python main.py --call …`.
+
 ## Quick start
 
 ```sh
@@ -53,7 +70,7 @@ dbus-monitor --session "type='signal',interface='org.mxoptions.Mouse1'"
 | `SetDpi(i dpi)` | `b` | Pointer speed until further notice. The user's setting is left alone; `0` returns to it, and so does the user moving the speed slider. |
 | `SetWheelMode(s mode)` | `b` | `ratchet`, `freespin`, `toggle`, or `auto` to return to what the settings say. |
 | `SwitchHost(i channel)` | `b` | Easy-Switch to another paired computer (channels count from 1). The mouse leaves this computer. |
-| `Trigger(s action)` | `b` | Runs an action: a catalogue id (see `ListActions`) or an action as JSON (see below). |
+| `Trigger(s action)` | `b` | Runs an action: a catalogue id (see `ListActions`) or an action as JSON (see below). False if it is not an action, or one this desktop has no way of doing. |
 | `ListActions()` | `as` | Ids of the catalogue actions, e.g. `copy`, `play_pause`, `overview`. |
 | `OpenRing()` | `b` | Opens the user's Actions Ring at the pointer; it waits for a click. |
 | `ShowRing(s bubbles)` | `b` | Opens a ring of your own for one use (see below). |
@@ -127,8 +144,9 @@ click elsewhere or 20 seconds without movement.
 |---|---|
 | `{"type": "keys", "keys": ["KEY_LEFTCTRL", "KEY_C"]}` | Keyboard shortcut (Linux input key names). |
 | `{"type": "button", "button": "BTN_LEFT"}` | Mouse click: `BTN_LEFT`, `BTN_RIGHT`, `BTN_MIDDLE`, `BTN_SIDE`, `BTN_EXTRA`. |
-| `{"type": "shortcut", "component": "kwin", "name": "Overview"}` | A KDE global shortcut, by its kglobalaccel name. |
-| `{"type": "command", "command": "konsole"}` | Shell command. |
+| `{"type": "desktop", "do": "overview"}` | Something every desktop does in its own way, by name: a KDE shortcut on Plasma, a key combination on GNOME, `swaymsg` or `hyprctl` on sway and Hyprland. This is what the catalogue's window and desktop actions are; the names are the catalogue ids (`overview`, `win_close`, `desktop_left`, `screenshot_region`, `lock`, …) plus `desktop_previous`, `desktop_next`, `window_desktop_previous` and `window_desktop_next`. Does nothing where the desktop has no way of doing it. |
+| `{"type": "shortcut", "component": "kwin", "name": "Overview"}` | A KDE global shortcut, by its kglobalaccel name. Does nothing on other desktops. |
+| `{"type": "command", "command": "firefox"}` | Shell command. |
 | `{"type": "script", "name": "VPN", "script": "..."}` | Multi-line script (bash unless it starts with `#!`). |
 | `{"type": "wheel_mode"}`, `{"type": "dpi_cycle"}`, `{"type": "host", "host": 1}` | Toggle the wheel mode, switch between the two pointer speeds, Easy-Switch (channels here count from 0). |
 | `{"type": "flow"}` | Send the mouse to the other computer of Flow, clipboard included (catalogue id `flow`). Nothing happens unless Flow is set up and the other computer is reachable. |

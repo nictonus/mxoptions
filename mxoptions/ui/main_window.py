@@ -128,6 +128,10 @@ class MainWindow(QMainWindow):
         self.banner.setObjectName("banner")
         self.banner.setWordWrap(True)
         banner_layout.addWidget(self.banner)
+        self.rival_banner = QLabel()
+        self.rival_banner.setObjectName("banner")
+        self.rival_banner.setWordWrap(True)
+        banner_layout.addWidget(self.rival_banner)
         right.addWidget(self.banner_box)
         right.addWidget(self.stack, 1)
         layout.addLayout(right, 1)
@@ -154,7 +158,17 @@ class MainWindow(QMainWindow):
             self.battery.set_level(None, False)
             self.device_status.setText(_("Connected") if connected else _("Not connected"))
         self.battery.setVisible(bool(battery))
-        self.banner_box.setVisible(not connected)
+        rivals = state.get("rivals") or []
+        self.banner_box.setVisible(not connected or bool(rivals))
+        self.banner.setVisible(not connected)
+        self.rival_banner.setVisible(bool(rivals))
+        if rivals:
+            self.rival_banner.setText(
+                _("{} is running too. Two programs that set the same mouse up undo each other's work: quit it while "
+                  "you use MX Options.").format(_(" and ").join(rivals))
+                + (" " + _("On Windows its service (OptionsPlusUpdaterService) starts it again unless that is stopped as well.")
+                   if "Logi Options+" in rivals else "")
+                + (" " + _("logiops is a system service: sudo systemctl disable --now logid") if "logiops" in rivals else ""))
         if not connected:
             self.banner.setText(
                 _("{} is asleep or out of range. Move it to wake it up; your settings are applied automatically.").format(state["name"])

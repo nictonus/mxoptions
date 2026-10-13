@@ -168,6 +168,52 @@ def leave_fraction(edge, pos, screen):
     return min(1.0, max(0.0, along))
 
 
+def _behind(edge, screen, along):
+    """The point just outside ``edge`` of ``screen``, ``along`` it."""
+    x, y, width, height = screen
+    if edge in ("left", "right"):
+        return (x + width + 1 if edge == "right" else x - 2), along
+    return along, (y + height + 1 if edge == "bottom" else y - 2)
+
+
+def _holds(screen, point):
+    x, y, width, height = screen
+    return x <= point[0] < x + width and y <= point[1] < y + height
+
+
+def at_edge(edge, pos, screens):
+    """The screen the pointer at ``pos`` is on, and how many pixels the pointer is from the ``edge`` side of
+    it: (screen, away). None if it is on no screen, or another screen continues behind that edge there."""
+    for screen in screens:
+        if not _holds(screen, pos):
+            continue
+        x, y, width, height = screen
+        away = {"right": x + width - 1 - pos[0], "left": pos[0] - x, "top": pos[1] - y, "bottom": y + height - 1 - pos[1]}[edge]
+        behind = _behind(edge, screen, pos[1] if edge in ("left", "right") else pos[0])
+        if any(other != screen and _holds(other, behind) for other in screens):
+            return None
+        return screen, away
+    return None
+
+
+def outer_span(edge, screen, screens):
+    """The longest stretch of the ``edge`` side of ``screen`` that no other screen continues behind, as
+    (start, length) along that side, counted from its top or left end. None if there is no such stretch."""
+    x, y, width, height = screen
+    upright = edge in ("left", "right")
+    origin, size = (y, height) if upright else (x, width)
+    best, start = None, None
+    for step in range(size + 1):
+        free = step < size and not any(other != screen and _holds(other, _behind(edge, screen, origin + step)) for other in screens)
+        if free and start is None:
+            start = step
+        elif not free and start is not None:
+            if best is None or step - start > best[1]:
+                best = (start, step - start)
+            start = None
+    return best
+
+
 def bounds(screens):
     """The rectangle around all screens."""
     left = min(s[0] for s in screens)
@@ -861,9 +907,14 @@ class Link:
 
     async def _open_udp(self):
         try:
-            transport, _protocol = await self._loop.create_datagram_endpoint(
-                lambda: _Datagrams(self._datagram), local_addr=("0.0.0.0", DISCOVERY_PORT), allow_broadcast=True,
-                reuse_port=True)  # a second copy of the program (a test, a trial run) may listen as well
+            # A second copy of the program (a test, a trial run) may listen on the port as well. What lets it differs:
+            # Linux has an option for sharing a port, on Windows the option to reuse an address does the same.
+            listener = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            listener.setsockopt(socket.SOL_SOCKET, getattr(socket, "SO_REUSEPORT", socket.SO_REUSEADDR), 1)
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            listener.setblocking(False)
+            listener.bind(("0.0.0.0", DISCOVERY_PORT))
+            transport, _protocol = await self._loop.create_datagram_endpoint(lambda: _Datagrams(self._datagram), sock=listener)
         except OSError as e:
             log.warning("flow: cannot look for other computers (UDP port %d): %s", DISCOVERY_PORT, e)
             return

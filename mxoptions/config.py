@@ -1,16 +1,16 @@
-"""Settings file (~/.config/mxoptions/config.json): defaults, load, save."""
+"""Settings file (config.json in the place paths.py names: ~/.config/mxoptions on Linux): defaults, load, save."""
 
 import copy
 import json
 import logging
 import os
 
-from . import APP_ID, device, flow, gestures
-from .actions import DEFAULT, PRESET_BY_ID, SCROLLS
+from . import device, environment, flow, gestures, paths
+from .actions import DEFAULT, PRESET_BY_ID, SCROLLS, dial_available
 
 log = logging.getLogger(__name__)
 
-CONFIG_DIR = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), APP_ID)
+CONFIG_DIR = paths.CONFIG
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 
 # Configurable buttons, in the order the UI lists them: key -> control ID
@@ -34,14 +34,19 @@ def _a(preset_id):
     return copy.deepcopy(PRESET_BY_ID[preset_id].action)
 
 
+def _first(*preset_ids):
+    """The first of these catalogue actions that this desktop can do (nothing, if it can do none of them)."""
+    return next((_a(pid) for pid in preset_ids if PRESET_BY_ID[pid].available), {"type": "none"})
+
+
 def default_gestures():
     return {
         "type": "gestures",
-        "tap": _a("overview"),
-        "up": _a("all_windows"),
-        "down": _a("show_desktop"),
-        "left": _a("desktop_left"),
-        "right": _a("desktop_right"),
+        "tap": _first("overview", "launcher"),
+        "up": _first("all_windows", "win_fullscreen"),
+        "down": _first("show_desktop", "win_minimize", "win_close"),
+        "left": _first("desktop_left"),
+        "right": _first("desktop_right"),
     }
 
 
@@ -65,27 +70,45 @@ def dial(scroll_id):
     return {"label": "", "icon": "", "color": "", "scroll": scroll_id}
 
 
+def offered(bubbles):
+    """``bubbles`` without the ones that could do nothing on this desktop, and without folders left empty by that."""
+    kept = []
+    for item in bubbles:
+        if "children" in item:
+            item = dict(item, children=offered(item["children"]))
+            if not item["children"]:
+                continue
+        elif "scroll" in item:
+            if not dial_available(item["scroll"]):
+                continue
+        elif not environment.available(item.get("action")):
+            continue
+        kept.append(item)
+    return kept
+
+
 def default_bubbles():
-    return [
+    return offered([
         bubble("copy"),
         bubble("paste"),
         bubble("screenshot_region"),
         folder("Media", [bubble(pid) for pid in ("play_pause", "next_track", "volume_up", "mute", "volume_down", "prev_track")],
                icon="applications-multimedia"),
-        bubble("overview"),
-        bubble("emoji"),
+        bubble(next(pid for pid in ("overview", "launcher", "terminal", "files") if PRESET_BY_ID[pid].available)),
+        bubble("emoji" if PRESET_BY_ID["emoji"].available else "files"),
         bubble("lock"),
-        bubble("krunner"),
-    ]
+        bubble("krunner" if PRESET_BY_ID["krunner"].available else "terminal"),
+    ])
 
 
 def _ring(*items):
-    """Bubbles from preset ids. "~id" makes a dial, a (label, icon, [ids]) tuple a folder."""
+    """Bubbles from preset ids, as far as this desktop can do them. "~id" makes a dial, a (label, icon, [ids])
+    tuple a folder."""
     def one(item):
         if isinstance(item, tuple):
             return folder(item[0], [one(child) for child in item[2]], icon=item[1])
         return dial(item[1:]) if item.startswith("~") else bubble(item)
-    return [one(item) for item in items]
+    return offered([one(item) for item in items])
 
 
 def _named(label, icon, action=None, preset=None, scroll=None):
@@ -160,7 +183,7 @@ def pro_bubbles():
 # Ready-made rings, listed clockwise from 12 o'clock: (id, label, builder)
 RING_PRESETS = [
     ("everyday", "Everyday", default_bubbles),
-    ("pro", "Pro", pro_bubbles),
+    *([("pro", "Pro", pro_bubbles)] if environment.current() == environment.KDE else []),  # KWin and its tiling script
     ("media", "Media", lambda: _ring(
         "play_pause", "~volume", "next_track", "~seek", "mute", "mic_mute", "prev_track", "~brightness")),
     ("browser", "Browser", lambda: _ring(
@@ -183,7 +206,7 @@ MAX_SAVED_RINGS = 16
 
 
 DEFAULTS = {
-    "version": 5,
+    "version": 6,
     "buttons": {
         "middle": DEFAULT,
         "back": DEFAULT,
@@ -328,7 +351,7 @@ def _migrate_ring(ring):
     slots = ring.get("slots")
     if not isinstance(slots, list):
         return ring.get("bubbles")
-    actions = [s.get("action") for s in slots if isinstance(s, dict)]
+    actions = [environment.modernize(s.get("action")) for s in slots if isinstance(s, dict)]
     if actions == [_a(pid) for pid in _OLD_RING]:
         return default_bubbles()  # untouched defaults: move on to the new ones
     return [bubble(action=a) for a in actions if isinstance(a, dict)]
@@ -345,7 +368,7 @@ def _sanitize_bubbles(bubbles, depth):
         elif isinstance(item.get("children"), list) and depth < MAX_RING_DEPTH:
             clean["children"] = _sanitize_bubbles(item["children"], depth + 1)
         elif isinstance(item.get("action"), dict) and "type" in item["action"]:
-            clean["action"] = item["action"]
+            clean["action"] = environment.modernize(item["action"])
         else:
             clean["action"] = {"type": "none"}
         result.append(clean)
@@ -354,20 +377,23 @@ def _sanitize_bubbles(bubbles, depth):
 
 def _sanitize(cfg):
     for key in BUTTONS:
-        action = cfg["buttons"].get(key)
+        # The KDE shortcuts the catalogue held before it named things for every desktop become those names here.
+        action = environment.modernize(cfg["buttons"].get(key))
         if not isinstance(action, dict) or "type" not in action:
             cfg["buttons"][key] = copy.deepcopy(DEFAULTS["buttons"][key])
         elif action["type"] == "gestures":
             clean = {"type": "gestures"}
             for direction in ("tap", "up", "down", "left", "right"):
-                sub = action.get(direction)
+                sub = environment.modernize(action.get(direction))
                 clean[direction] = sub if isinstance(sub, dict) and "type" in sub else {"type": "none"}
             drawn = action.get("shapes")  # shape id -> action, for the shapes that have one
-            drawn = {name: sub for name, sub in (drawn.items() if isinstance(drawn, dict) else ())
+            drawn = {name: environment.modernize(sub) for name, sub in (drawn.items() if isinstance(drawn, dict) else ())
                      if name in gestures.SHAPES and isinstance(sub, dict) and sub.get("type") not in (None, "none")}
             if drawn:
                 clean["shapes"] = drawn
             cfg["buttons"][key] = clean
+        else:
+            cfg["buttons"][key] = action
     cfg["ring"]["bubbles"] = _sanitize_bubbles(_migrate_ring(cfg["ring"]), 1) or default_bubbles()
     cfg["ring"].pop("slots", None)
     _clamp(cfg, "ring", "size", 0.7, 1.5, float)

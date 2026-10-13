@@ -3,7 +3,8 @@ import QtQuick.Window
 import org.kde.layershell as LayerShell
 import MXOptions
 
-// Transparent full-screen overlay; the ring itself is positioned from Python.
+// Transparent full-screen overlay on a layer above the windows, for Wayland compositors that have
+// such layers; the ring itself is positioned from Python.
 Window {
     id: win
     color: "transparent"
@@ -28,24 +29,5 @@ Window {
             shell.screenConfiguration = LayerShell.Window.ScreenFromCompositor
     }
 
-    MouseArea {
-        anchors.fill: parent
-        hoverEnabled: true
-        acceptedButtons: Qt.AllButtons
-        onEntered: overlay.pointerAt(mouseX, mouseY)
-        onPositionChanged: (mouse) => overlay.pointerAt(mouse.x, mouse.y)
-        onClicked: (mouse) => overlay.clickAt(mouse.x, mouse.y)
-        // the thumb wheel scrolls sideways; rolling it forward (to the right) counts as "up"
-        onWheel: (wheel) => overlay.wheelAt(wheel.x, wheel.y, wheel.angleDelta.y - wheel.angleDelta.x)
-    }
-
-    RingItem {
-        id: ring
-        objectName: "ring"
-        property bool shown: false   // set from Python once the cursor position is known
-        width: 380
-        height: 380
-        opacity: shown ? 1 : 0
-        Behavior on opacity { NumberAnimation { duration: 90 } }
-    }
+    RingSurface { anchors.fill: parent }
 }

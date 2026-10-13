@@ -13,7 +13,7 @@ import logging
 from PySide6.QtCore import ClassInfo, Property, QObject, Signal, Slot
 from PySide6.QtDBus import QDBusConnection
 
-from . import __version__, actions, config, device
+from . import __version__, actions, config, device, environment
 
 log = logging.getLogger(__name__)
 
@@ -22,8 +22,8 @@ PATH = "/org/mxoptions/Mouse"
 INTERFACE = "org.mxoptions.Mouse1"
 API_VERSION = 1
 # Actions another program may run through Trigger(); the rest only make sense on a physical button.
-TRIGGERABLE = ("none", "keys", "button", "shortcut", "command", "script", "macro", "wheel_mode", "dpi_cycle", "host", "flow",
-               "hook")
+TRIGGERABLE = ("none", "keys", "button", "shortcut", "desktop", "command", "script", "macro", "wheel_mode", "dpi_cycle", "host",
+               "flow", "hook")
 CHARGING = (device.BATTERY_CHARGING, device.BATTERY_ALMOST_FULL, device.BATTERY_SLOW_CHARGE, device.BATTERY_FULL)
 
 
@@ -59,6 +59,28 @@ def parse_action(text):
     if not isinstance(action, dict) or action.get("type") not in TRIGGERABLE:
         return None
     return action
+
+
+# What `mxoptions --call` (and anything else that reaches the running program directly, see app.py) may ask for:
+# the methods of the interface, and its properties, which take no arguments. Those of the methods that take numbers:
+CALLABLE = ("ListHaptics", "PlayHaptic", "SetDpi", "SetWheelMode", "SwitchHost", "ListActions", "Trigger", "OpenRing",
+            "ShowRing", "CloseRing", "Get", "Set", "GetConfig", "ShowWindow")
+PROPERTIES = ("ApiVersion", "AppVersion", "Battery", "Charging", "Connected", "DeviceName", "Dpi", "WheelMode")
+_NUMBERS = ("SetDpi", "SwitchHost")
+
+
+def call(interface, name, arguments):
+    """Call ``name`` of the interface with ``arguments`` (strings, as typed): (True, what it returned) or
+    (False, why it could not be called)."""
+    if name in PROPERTIES and not arguments:
+        return True, interface.property(name)
+    if name not in CALLABLE:
+        return False, f"no such call: {name}"
+    try:
+        given = [int(value) if name in _NUMBERS else value for value in arguments]
+        return True, getattr(interface, name)(*given)
+    except (TypeError, ValueError) as error:
+        return False, f"{name}: {error}"
 
 
 @ClassInfo({"D-Bus Interface": INTERFACE})
@@ -180,13 +202,13 @@ class MouseApi(QObject):
     @Slot(result="QStringList")
     def ListActions(self):
         """Ids of the catalogue actions Trigger() accepts by name."""
-        return [preset.id for preset in actions.PRESETS if preset.action.get("type") in TRIGGERABLE]
+        return [preset.id for preset in actions.PRESETS if preset.action.get("type") in TRIGGERABLE and preset.available]
 
     @Slot(str, result=bool)
     def Trigger(self, action):
         """Run an action: a catalogue id ("copy", "play_pause") or JSON like {"type": "keys", "keys": ["KEY_F5"]}."""
         parsed = parse_action(action)
-        if parsed is None:
+        if parsed is None or not environment.available(parsed):  # ... or this desktop has no way of doing it
             return False
         self._store.engine.trigger_action(parsed)
         return True
@@ -255,13 +277,16 @@ class Service(QObject):
         super().__init__(parent)
         self.api = MouseApi(store, overlay, show_window, self)
         self.active = False
+        self._no_bus = False  # said once that there is no session bus
 
     def set_enabled(self, enabled):
         if enabled == self.active:
             return
         bus = QDBusConnection.sessionBus()
         if not bus.isConnected():
-            log.warning("no session bus: other programs cannot reach the app")
+            if not self._no_bus:  # as on Windows, always: there `mxoptions --call` is the way in
+                self._no_bus = True
+                log.info("no session bus here: other programs reach the app through `mxoptions --call` only")
             return
         if enabled:
             options = QDBusConnection.RegisterOption

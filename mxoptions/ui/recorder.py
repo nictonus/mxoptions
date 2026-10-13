@@ -1,22 +1,20 @@
 """Widget that records a key combination as evdev key names."""
 
-from evdev import ecodes
+import sys
+
 from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtWidgets import QLabel
 
-from .. import actions
+from .. import actions, keys
 from ..i18n import _
 from ..vinput import MODIFIERS
 
 
 def _evdev_name(scan_code):
-    """Qt reports the XKB keycode on Linux, which is the evdev code + 8."""
-    names = ecodes.KEY.get(scan_code - 8)
-    if names is None:
-        return None
-    if isinstance(names, str):
-        names = [names]
-    return next((n for n in names if n.startswith("KEY_") and n != "KEY_MIN_INTERESTING"), None)
+    """The Linux name of the key Qt reports. On Linux that is the XKB keycode, which is the kernel's number
+    + 8; on Windows the scan code of the PC keyboard."""
+    name = keys.from_windows(scan_code) if sys.platform == "win32" else keys.name(scan_code - 8)
+    return name if name and name.startswith("KEY_") else None
 
 
 class ShortcutRecorder(QLabel):

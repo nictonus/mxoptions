@@ -402,8 +402,11 @@ class FlowPage(ScrollPage):
             return _("Connected to {name}, but both computers believe they are on Easy-Switch channel {channel}. Switch "
                      "the mouse to each of them once with the Easy-Switch button.").format(name=name, channel=channel + 1)
         if not status["edges"]:
-            return _("Connected to {}. The screen edge is only watched on KDE Plasma: here, give a button, a gesture "
-                     "or a ring bubble the action “Move to the other computer (Flow)”.").format(name)
+            return _("Connected to {}. This desktop does not let a program watch the screen edge: here, give a button, "
+                     "a gesture or a ring bubble the action “Move to the other computer (Flow)”.").format(name)
+        if status.get("edge_watch") == "strips":
+            return _("Connected to {}. Push the pointer past the lit edge to cross. A line one pixel wide along that "
+                     "edge is what feels the pointer here; a click on it is passed on to what is under it.").format(name)
         return _("Connected to {}. Push the pointer past the lit edge to cross.").format(name)
 
     def _status_text(self, cfg, status):
@@ -423,7 +426,8 @@ class FlowPage(ScrollPage):
             status = service.status()
         else:  # the page on its own, as when it is drawn for the documentation
             status = {"supported": flow.supported(), "on": False, "address": "", "problem": "", "channel": cfg["channel"],
-                      "here": bool(self.store.state["connected"]), "edges": True, "rich": True, "pairing": None,
+                      "here": bool(self.store.state["connected"]), "edges": True, "edge_watch": "", "copies": True, "rich": True,
+                      "pairing": None,
                       "transfer": None, "offers": [], "pair_error": "",
                       "peers": [{"pair": flow.pair_id(entry["key"]), "name": entry["name"], "edge": entry["edge"], "address": entry["address"],
                                  "key": entry["key"], "linked": False, "channel": None, "present": False, "quiet": False}
@@ -525,11 +529,16 @@ class FlowPage(ScrollPage):
         self.push.set_value(cfg["push_mm"])
         self.corner.set_value(cfg["corner"])
         self.fullscreen.set_checked_silently(cfg["fullscreen"])
-        self.clipboard.set_checked_silently(cfg["clipboard"])
+        copies = status.get("copies", True)
+        self.clipboard.set_checked_silently(cfg["clipboard"] and copies)
+        self.clipboard.setEnabled(copies)
         self.files.set_checked_silently(cfg["files"] and status["rich"])
         self.files.setEnabled(status["rich"])
-        self.files_row.note.setText("" if status["rich"] else _(
-            "Only text can cross here: files and pictures need KDE's clipboard service (the Python bindings of KGuiAddons)."))
+        self.files_row.note.setText(
+            "" if status["rich"]
+            else _("Only text can cross here. For files and pictures install wl-clipboard.") if copies
+            else _("This desktop does not let a program in the background see what was copied. Install wl-clipboard, "
+                   "then start MX Options again."))
         self.files_row.note.setVisible(not status["rich"])
         self.limit.set_value(min((value for value, _label in FILE_LIMITS), key=lambda value: abs(value - cfg["files_max_mb"])))
         self.limit_row.setEnabled(cfg["files"] and status["rich"])

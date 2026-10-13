@@ -3,7 +3,7 @@
 import copy
 
 from PySide6.QtCore import QPoint, QSize, Qt, Signal
-from PySide6.QtGui import QIcon, QPainter
+from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import (
     QButtonGroup, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu,
     QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget,
@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 
 from .. import APP_NAME, actions, config
 from ..i18n import _
-from . import ring, theme
+from . import icons, ring, theme
 from .action_picker import ActionList
 from .pages import BUTTON_TITLES
 from .widgets import ElidedButton, InfoButton, Row, Segmented, SliderRow, SwatchRow, hint_label, titled, ui_scale
@@ -77,11 +77,11 @@ class IconPicker(QFrame):
         layout.setSpacing(10)
         grid = QGridLayout()
         grid.setSpacing(2)
-        names = [name for name in ICON_CHOICES if QIcon.hasThemeIcon(name)]
+        names = [name for name in ICON_CHOICES if icons.has(name)]
         for index, name in enumerate(names):
             cell = QPushButton()
             cell.setObjectName("iconCell")
-            cell.setIcon(QIcon.fromTheme(name))
+            cell.setIcon(icons.icon(name))
             cell.setIconSize(QSize(22, 22))
             cell.setFixedSize(34, 34)
             cell.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -176,6 +176,10 @@ class BubbleEditor(QFrame):
         self.kind = Segmented([("action", _("Action")), ("folder", _("Folder")), ("scroll", _("Dial"))])
         self.kind.selected.connect(self.kind_changed.emit)
         fields.addWidget(self.kind)
+        # A slider is what people look for among the actions, and find only "Volume up" there
+        self.dial_tip = hint_label(_("For volume, brightness, zoom and the like choose Dial: one bubble that the scroll "
+                                     "wheel turns both ways, like a slider."))
+        fields.addWidget(self.dial_tip)
         layout.addLayout(fields)
 
         self.stack = QStackedWidget()
@@ -210,12 +214,13 @@ class BubbleEditor(QFrame):
             row.setObjectName("actionRow")
             row.setCheckable(True)
             row.setCursor(Qt.CursorShape.PointingHandCursor)
-            row.setIcon(QIcon.fromTheme(ring.theme_icon_name(icon) or icon))
+            row.setIcon(icons.icon(ring.theme_icon_name(icon) or icon))
             row.setIconSize(QSize(18, 18))
             row.clicked.connect(lambda _checked=False, s=scroll_id: self.changed.emit("scroll", s))
             self._dial_group.addButton(row)
             self._dials[scroll_id] = row
             dial_layout.addWidget(row)
+            row.setVisible(actions.dial_available(scroll_id))  # the tiling dials, for one, are KWin's alone
         dial_layout.addStretch(1)
         self.stack.addWidget(dials)
         layout.addWidget(self.stack, 1)
@@ -251,6 +256,7 @@ class BubbleEditor(QFrame):
         self.left.setEnabled(index > 0)
         self.right.setEnabled(index < count - 1)
         self.stack.setCurrentIndex(1 if folder else 2 if dial else 0)
+        self.dial_tip.setVisible(not folder and not dial)
         if folder:
             self.folder_hint.setText(_("This bubble opens its own ring. Bubbles inside: {}.").format(len(bubble["children"])))
         elif dial:

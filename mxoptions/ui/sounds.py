@@ -17,6 +17,8 @@ import wave
 
 from PySide6.QtCore import QObject, QUrl
 
+from .. import paths
+
 try:
     from PySide6.QtMultimedia import QSoundEffect
 except ImportError:  # then a command-line player has to do
@@ -25,7 +27,7 @@ except ImportError:  # then a command-line player has to do
 log = logging.getLogger(__name__)
 
 RATE = 48000
-CACHE_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "mxoptions", "sounds")
+CACHE_DIR = os.path.join(paths.CACHE, "sounds")
 KINDS = ("freespin", "ratchet")  # what the wheel has just changed to
 _PLAYERS = ("pw-play", "paplay", "aplay")
 

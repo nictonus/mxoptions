@@ -4,11 +4,11 @@
 #
 # The archive is the one GitHub makes for a tag:  https://github.com/nictonus/mxoptions/tags
 
-%global tag     v0.10.0-beta.2
-%global srcdir  mxoptions-0.10.0-beta.2
+%global tag     v0.10.0-beta.3
+%global srcdir  mxoptions-0.10.0-beta.3
 
 Name:           mxoptions
-Version:        0.10.0~b2
+Version:        0.10.0~b3
 Release:        1%{?dist}
 Summary:        Settings for Logitech MX Master mice
 
@@ -30,6 +30,7 @@ Requires:       qt6-qtsvg
 Requires:       layer-shell-qt
 Recommends:     python3-numpy
 Recommends:     fwupd
+Recommends:     wl-clipboard
 
 %description
 Buttons, gestures, the Actions Ring, the wheels, haptics and Easy-Switch of
@@ -68,5 +69,8 @@ udevadm trigger --sysname-match=uinput >/dev/null 2>&1 || :
 %{_udevrulesdir}/70-mxoptions.rules
 
 %changelog
+* Wed Oct 14 2026 nictonus <nictonus@users.noreply.github.com> - 0.10.0~b3-1
+- Works on desktops other than KDE Plasma; first build for Windows
+
 * Mon Oct 13 2026 nictonus <nictonus@users.noreply.github.com> - 0.10.0~b2-1
 - Second beta of 0.10.0: Flow for three computers, game rumble, shapes, tray icon styles

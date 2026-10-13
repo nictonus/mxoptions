@@ -1,11 +1,17 @@
-"""HID++ 2.0 transport over hidraw: discovery, request/response matching, notifications."""
+"""HID++ 2.0 transport: discovery, request/response matching, notifications.
 
-import glob
+The devices themselves are reached through the system's own HID access: hidraw nodes on Linux
+(hid_linux.py), HID collections on Windows (hid_windows.py)."""
+
 import logging
-import os
-import select
+import sys
 import threading
 import time
+
+if sys.platform == "win32":
+    from . import hid_windows as hid
+else:
+    from . import hid_linux as hid
 
 log = logging.getLogger(__name__)
 
@@ -44,34 +50,16 @@ class HidppOffline(HidppError):
 
 
 class HidppClosed(HidppError):
-    """The hidraw node went away (receiver unplugged, Bluetooth dropped)."""
+    """The device went away (receiver unplugged, Bluetooth dropped)."""
 
 
-def find_hidpp_nodes():
-    """Return [(devnode, is_receiver)] for Logitech hidraw nodes that speak HID++ long reports."""
-    nodes = []
-    for sys_path in sorted(glob.glob("/sys/class/hidraw/hidraw*")):
-        try:
-            with open(os.path.join(sys_path, "device", "uevent")) as f:
-                uevent = dict(line.strip().split("=", 1) for line in f if "=" in line)
-            bus, vid, pid = (int(x, 16) for x in uevent.get("HID_ID", "0:0:0").split(":"))
-            if vid != LOGITECH_VID:
-                continue
-            with open(os.path.join(sys_path, "device", "report_descriptor"), "rb") as f:
-                desc = f.read()
-        except (OSError, ValueError):
-            continue
-        # Vendor usage page (FF00 on USB, FF43 on Bluetooth) carrying report ID 0x11.
-        vendor_page = b"\x06\x00\xff" in desc or b"\x06\x43\xff" in desc
-        if not vendor_page or b"\x85\x11" not in desc:
-            continue
-        is_receiver = bus == 0x0003 and "receiver" in uevent.get("HID_NAME", "").lower()
-        nodes.append((os.path.join("/dev", os.path.basename(sys_path)), is_receiver))
-    return nodes
+find_hidpp_nodes = hid.find_hidpp_nodes
+find_mouse_report_node = hid.find_mouse_report_node
+read_descriptor = hid.read_descriptor
 
 
 class Transport:
-    """One open hidraw node. A reader thread routes replies to the pending request and
+    """One open device that speaks HID++. A reader thread routes replies to the pending request and
     hands everything else to ``on_notification(devidx, sub_id, address, data)``."""
 
     def __init__(self, path, is_receiver, on_notification=None, on_closed=None):
@@ -79,8 +67,7 @@ class Transport:
         self.is_receiver = is_receiver
         self.on_notification = on_notification
         self.on_closed = on_closed
-        self._fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
-        self._wake_r, self._wake_w = os.pipe()
+        self._port = hid.Port(path)
         self._request_lock = threading.Lock()
         self._pending = None  # (devidx, feat_idx, fn_byte)
         self._reply = None
@@ -89,7 +76,7 @@ class Transport:
         # A mouse connected directly (Bluetooth, cable) sends its ordinary reports on this node too:
         # ``on_report(data)`` gets them (see DirectWatcher). A receiver sends those on another node.
         self.on_report = None
-        self._thread = threading.Thread(target=self._read_loop, name=f"hidpp-{os.path.basename(path)}", daemon=True)
+        self._thread = threading.Thread(target=self._read_loop, name=f"hidpp-{hid.short_name(path)}", daemon=True)
         self._thread.start()
 
     @property
@@ -103,28 +90,16 @@ class Transport:
         if self._closed:
             return
         self._closed = True
-        try:
-            os.write(self._wake_w, b"x")
-        except OSError:
-            pass
+        self._port.wake()
         if threading.current_thread() is not self._thread:
             self._thread.join(timeout=1.0)
-        for fd in (self._fd, self._wake_r, self._wake_w):
-            try:
-                os.close(fd)
-            except OSError:
-                pass
+        self._port.close()
         self._reply_ready.set()
 
     def _read_loop(self):
         while not self._closed:
             try:
-                readable, _, _ = select.select([self._fd, self._wake_r], [], [])
-                if self._closed:
-                    return
-                if self._fd not in readable:
-                    continue
-                data = os.read(self._fd, 64)
+                data = self._port.read()
             except (OSError, ValueError):
                 data = b""
             if not data:
@@ -189,7 +164,7 @@ class Transport:
             self._reply_ready.clear()
             self._pending = None if no_reply else (devidx, feat_idx, fn_byte)
             try:
-                os.write(self._fd, packet)
+                self._port.write(packet)
             except OSError as e:
                 self._pending = None
                 raise HidppClosed(f"{self.path}: {e}") from e
@@ -222,37 +197,6 @@ class Transport:
                 return None
             return reply[0], reply[1]
         return None
-
-
-def find_mouse_report_node(hidpp_path):
-    """The receiver exposes ordinary mouse reports on a sibling hidraw node; return its path or None."""
-    def usb_device(name):
-        return os.path.realpath(os.path.join("/sys/class/hidraw", name, "device", "..", ".."))
-
-    own = os.path.basename(hidpp_path)
-    try:
-        parent = usb_device(own)
-        for sys_path in sorted(glob.glob("/sys/class/hidraw/hidraw*")):
-            name = os.path.basename(sys_path)
-            if name == own or usb_device(name) != parent:
-                continue
-            with open(os.path.join(sys_path, "device", "report_descriptor"), "rb") as f:
-                desc = f.read()
-            # Generic Desktop / Mouse collection that uses report ID 2 (the receivers' fixed layout)
-            if desc.startswith(b"\x05\x01\x09\x02") and b"\x85\x02" in desc[:12]:
-                return os.path.join("/dev", name)
-    except OSError:
-        pass
-    return None
-
-
-def read_descriptor(node):
-    """The HID report descriptor of a hidraw node (b"" if it cannot be read)."""
-    try:
-        with open(os.path.join("/sys/class/hidraw", os.path.basename(node), "device", "report_descriptor"), "rb") as f:
-            return f.read()
-    except OSError:
-        return b""
 
 
 def mouse_layout(desc):
@@ -372,8 +316,7 @@ class ButtonWatcher(MouseReports):
     def __init__(self, path, on_change, on_wheel=None):
         super().__init__(path, on_change, on_wheel)
         self.path = path
-        self._fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
-        self._wake_r, self._wake_w = os.pipe()
+        self._port = hid.Port(path, write=False)
         self._closed = False
         self._thread = threading.Thread(target=self._loop, name="buttons", daemon=True)
         self._thread.start()
@@ -382,26 +325,30 @@ class ButtonWatcher(MouseReports):
         if self._closed:
             return
         self._closed = True
-        try:
-            os.write(self._wake_w, b"x")
-        except OSError:
-            pass
+        self._port.wake()
         self._thread.join(timeout=1.0)
-        for fd in (self._fd, self._wake_r, self._wake_w):
-            try:
-                os.close(fd)
-            except OSError:
-                pass
+        self._port.close()
 
     def _loop(self):
         while not self._closed:
             try:
-                readable, _, _ = select.select([self._fd, self._wake_r], [], [])
-                if self._closed or self._fd not in readable:
-                    continue
-                data = os.read(self._fd, 64)
+                data = self._port.read()
             except (OSError, ValueError):
                 return
             if not data:
                 return
             self.feed(data)
+
+
+def watch_mouse(transport, on_change, on_wheel=None):
+    """Follow what the mouse on ``transport`` itself reports of its buttons, wheel and movement (see MouseReports
+    for what is called when). Returns the watcher, to be closed when no longer needed, or None if there is no
+    way of following that mouse; raises OSError if the way there is could not be opened."""
+    if sys.platform == "win32":  # Windows keeps a mouse's own reports to itself, and hands out their content otherwise
+        from . import rawmouse_windows
+
+        return rawmouse_windows.RawMouse(transport.path, on_change, on_wheel)
+    if transport.is_receiver:  # the receiver sends them on a node of their own
+        path = find_mouse_report_node(transport.path)
+        return ButtonWatcher(path, on_change, on_wheel) if path else None
+    return DirectWatcher(transport, on_change, on_wheel)  # Bluetooth or a cable: they arrive where the HID++ traffic does

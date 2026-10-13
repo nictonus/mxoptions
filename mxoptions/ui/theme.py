@@ -3,7 +3,12 @@
 The colour names below are module globals that custom-painted widgets read at paint
 time; :func:`set_theme` swaps them and :func:`apply` restyles the running application."""
 
-from PySide6.QtGui import QColor, QPalette
+import logging
+import os
+
+from PySide6.QtGui import QColor, QIcon, QPalette
+
+log = logging.getLogger(__name__)
 
 THEMES = {
     "graphite": dict(dark=True, bg="#14151a", sidebar="#101116", card="#1d1f26", card_hover="#252832",
@@ -91,6 +96,18 @@ def set_theme(name=DEFAULT_THEME, accent=DEFAULT_ACCENT):
         "BUBBLE_BORDER": "#3a3e4b" if dark else "#cfd4de",
     }
     globals().update(values)
+
+
+def ensure_icon_theme():
+    """An icon theme for sessions that name none (a window manager with no desktop around it): without one
+    the icons of the catalogue and of the ring would all be drawn as letters."""
+    if QIcon.themeName() not in ("", "hicolor"):
+        return
+    for name in ("breeze", "breeze-dark", "Adwaita", "Papirus", "elementary", "oxygen", "gnome"):
+        if any(os.path.isfile(os.path.join(folder, name, "index.theme")) for folder in QIcon.themeSearchPaths()):
+            QIcon.setThemeName(name)
+            log.info("no icon theme is set for this session: using %s", name)
+            return
 
 
 def palette():

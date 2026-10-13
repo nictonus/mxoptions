@@ -25,8 +25,8 @@ service and a D-Bus API for other programs.
 ## What it does
 
 - **Buttons.** Middle, back, forward, gesture, wheel-mode button and the haptic panel each take
-  any of about 70 ready actions, a keyboard shortcut, a KDE global shortcut, a command, a script,
-  a macro, or a signal to another program. The mouse is drawn with the button you are pressing lit
+  any of about 70 ready actions (each done the way your desktop does it), a keyboard shortcut, a
+  command, a script, a macro, or a signal to another program. The mouse is drawn with the button you are pressing lit
   up.
 - **Gestures.** Hold a button and swipe in four directions, or tap. A live compass shows how your
   movement is read. You choose when a swipe fires (on release, at once, or repeating as you keep
@@ -66,9 +66,11 @@ gestures working on a Signature M650 L.
 - Python 3.12 or newer (3.13 or newer for Flow)
 - PySide6 (Qt 6.6 or newer), with Qt Declarative and Qt Multimedia
 - python-evdev
-- layer-shell-qt (its QML module draws the ring over other windows)
+- layer-shell-qt (its QML module draws the ring over other windows on Wayland; a small library, not a
+  desktop: it is wanted on sway and Hyprland as much as on KDE Plasma)
 - numpy, optional: the glossy 3D model and soft shadows
-- KGuiAddons with its Python bindings (KDE Frameworks 6), optional: pictures and files in Flow
+- for what was copied to cross with Flow, optional: KGuiAddons with its Python bindings (KDE
+  Frameworks 6), or wl-clipboard. On X11 neither is needed.
 
 Use your distribution's PySide6. One installed with pip brings its own Qt, which cannot see the
 system's layer-shell module, so the Actions Ring would not appear.
@@ -81,8 +83,93 @@ system's layer-shell module, so the Actions Ring would not appear.
 
 Older Ubuntu releases (24.04 and before) have no PySide6 package.
 
-Outside KDE the mouse settings themselves work, but the ring needs a compositor with layer-shell,
-and many ready actions are KDE shortcuts.
+### Desktops
+
+What talks to the mouse (buttons, gestures, the wheels, pointer speed, haptics, Easy-Switch, game
+rumble) does not depend on the desktop. What talks to the desktop does, and is done in the way
+each desktop allows:
+
+| | KDE Plasma | sway, Hyprland and other compositors with layer-shell | GNOME on Wayland | X11 desktops (Xfce, Cinnamon, MATE, i3, …) |
+|---|---|---|---|---|
+| Ready actions for windows and the desktop | KDE's own shortcuts: all of them | `swaymsg`, `hyprctl`; a launcher, screenshots and a terminal from what is installed (fuzzel, wofi, rofi; grim and slurp) | GNOME's key combinations as it ships them | the usual key combinations (Alt+F4, Ctrl+Alt+arrows, Print, …) |
+| Actions Ring | on a layer above the windows | the same | in a window on the session's X server (XWayland), which takes no focus; a little soft where the display is scaled by a fraction | in a window the window manager leaves alone; as a panel of the ring's size where nothing composites |
+| Flow: the screen edge | a KWin script | a see-through line one pixel wide along the edge | not possible: use the *Move to the other computer (Flow)* action | the pointer's position is asked for |
+| Flow: what was copied | KGuiAddons, else wl-clipboard | the same | wl-clipboard | Qt itself |
+
+An action a desktop has no way of doing is not offered there, and settings made on KDE keep working:
+*Overview* stays *Overview*, done as the desktop at hand does it. The key combinations are the
+ones a desktop comes with; one you have rebound will not do its job, and then a keyboard shortcut of
+your own in its place will.
+
+**What was actually run.** Only KDE Plasma 6 on Wayland is used day to day. The X11 ways (the ring's
+window, the pointer watching, full-screen detection, the clipboard) were run in a virtual X server
+with no window manager. The line along the edge was run on KWin, where it hears the pointer and
+passes clicks and scrolling on, and so was the ring through XWayland, which there comes up over
+everything, is picked from and leaves the focus where it was. Nothing at all was run on GNOME,
+sway, Hyprland or any X11 desktop itself: their commands and key combinations come from their
+documentation. Reports are welcome.
+
+On GNOME the ring is drawn by a small second program (it has to talk to the X server, which the
+main one, a Wayland program, cannot). Where the session keeps no X server the ring falls back to an
+ordinary window, which takes the focus while it is open.
+
+`MXOPTIONS_DESKTOP` (`kde`, `gnome`, `sway`, `hyprland`, `other`), `MXOPTIONS_RING` (`layer`, `x11`,
+`xwayland`, `window`), `MXOPTIONS_FLOW_EDGES` (`kwin`, `poll`, `strips`, `none`) and `MXOPTIONS_CLIPBOARD`
+(`ksystem`, `qt`, `wl-clipboard`, `klipper`, `none`) override what the program works out for
+itself, should it get one of them wrong.
+
+## Windows (in progress)
+
+The program is being ported to Windows. `python tools\build_windows.py` (with Python 3.13,
+`pip install PySide6 numpy pyinstaller`, and Inno Setup for the last of the three) makes a folder
+with `mxoptions.exe`, a zip of it, and an installer, `mxoptions-<version>-setup.exe`. The installer
+puts the program into the user's own program folder, asks for no administrator, adds a Start menu
+entry and, if wanted, starts the program at sign-in; it also updates and removes it. Neither the
+program nor the installer is signed, so Windows asks before running them the first time. From the
+source tree the program runs as `pythonw main.py`.
+
+**Logi Options+ has to be out of the way**, or the two undo each other's settings of the mouse. Its
+agent is started again by its service whenever it is closed, so both have to go, from an
+administrator's PowerShell (until the next start of Windows, or for good by uninstalling it):
+
+```powershell
+Stop-Service OptionsPlusUpdaterService; Stop-Process -Name logioptionsplus_agent, logioptionsplus_appbroker -Force
+```
+
+MX Options says so in its window when it finds Options+ running.
+
+What was run on Windows 11 with the mouse on Bluetooth, driven from another computer with nobody
+at the mouse:
+
+- the program, both from the tree and built, finds the mouse and reads and sets its battery,
+  pointer speed, wheel mode, vibration and Easy-Switch channel;
+- keys, text, clicks and scrolling are sent, the ready actions with Windows' own key combinations;
+- the Actions Ring opens at the pointer, is picked from, and leaves the keyboard where it was;
+- the settings window draws as on Linux, with Windows' own icon font standing in for icon names
+  Windows lacks;
+- Flow with a Linux computer, by the *Move to the other computer* action: the mouse goes across and
+  back, and with it text, files and folders (names Windows cannot write are changed as little as
+  will do). A computer with both systems keeps one pairing for the two;
+- the mouse's own movement, buttons and wheel are read (through raw input) and told apart from
+  other pointing devices, which is what crossing at the screen edge and the click of the wheel
+  changing mode by itself go by;
+- the screen brightness actions set the laptop's own panel through its display driver, and monitors
+  that take it over their cable (the panel was tried, such a monitor was not);
+- the installer installs, updates over a running copy, and lists the program among the installed
+  ones; "Start at login" writes and removes its entry;
+- `mxoptions --call` stands in for the D-Bus interface, which Windows does not have.
+
+**Game rumble needs a driver on Windows.** Windows lets a program add a game controller only through
+a driver made for that; the one used is [ViGEmBus](https://github.com/nefarius/ViGEmBus/releases),
+which you install once (it is no longer developed, and still the one such tools use). The Windows
+build carries its client library (ViGEmClient.dll, MIT licence, fetched and checked when the build is
+made). Without the driver the settings say so; with it, rumble has not been run yet.
+
+Not tried, because it takes a hand on the mouse: the buttons, gestures and wheels themselves (the
+same code as on Linux), and pushing the pointer past the screen edge to cross. Not tried either: the
+Bolt receiver (written, never plugged in there) and game rumble (see above). Not there yet: letting
+Flow be found by other computers (Windows' firewall asks about that; the Windows side calls the
+other computer itself, which needs no permission).
 
 ## Installing
 
@@ -125,6 +212,13 @@ distributions publish. Neither has been installed on its distribution by the aut
 report what does not fit. `make deb-test` and `make rpm` do that trial: they fetch the official
 Debian or Fedora image, enter it without root or a container engine (`tools/distro.py`), install
 the package with its dependencies and run the tests there. They download a few hundred megabytes.
+
+### Windows
+
+Take `mxoptions-<version>-setup.exe` from the [releases](https://github.com/nictonus/mxoptions/releases)
+and run it; it installs for your user and asks for no administrator. It is not signed, so Windows
+asks before running it ("More info", then "Run anyway"). Close Logi Options+ first, as set out under
+[Windows (in progress)](#windows-in-progress), which also says what does and does not work there yet.
 
 ### Any distribution, for your user only (no root)
 
@@ -169,6 +263,19 @@ systemctl --user disable --now mxoptions
 stops the service until the next login; while it is stopped the mouse behaves as it does without
 any software.
 
+The service starts with systemd's `graphical-session.target`. KDE Plasma and GNOME reach it by
+themselves. A compositor started on its own (sway, Hyprland, a window manager from `.xinitrc`)
+does not, unless you have set that up; there, start the program from the compositor's own
+configuration instead:
+
+```
+exec mxoptions --background          # sway, i3
+exec-once = mxoptions --background   # Hyprland
+```
+
+Without a system tray the program has nowhere to sit behind its window: started in the background
+it still runs, and starting it again from the menu opens the window.
+
 ## Permissions
 
 The app talks to the mouse through its `hidraw` device and sends key presses, clicks and scrolling
@@ -203,9 +310,11 @@ What it needs:
 
 - MX Options running on every one of them, on the same network;
 - the mouse paired with each, on an Easy-Switch channel of its own (Bolt receiver or Bluetooth);
-- KDE Plasma for the screen edge and for pictures and files. On other desktops only text crosses,
-  and a button, a gesture or a ring bubble with the action *Move to the other computer (Flow)*
-  takes the place of the edge.
+- a desktop that lets the pointer be watched at the screen edge: all but GNOME on Wayland do (see
+  [Desktops](#desktops)). There, and wherever you prefer it, a button, a gesture or a ring bubble
+  with the action *Move to the other computer (Flow)* takes the place of the edge;
+- for what you copied to cross: KGuiAddons with its Python bindings or wl-clipboard on Wayland,
+  nothing more on X11.
 
 Setting it up, on the *Flow* page:
 
@@ -311,10 +420,17 @@ then, and for other mice, it draws its own 3D model.
   computer has received the mouse.
 - **Game rumble was not tried in a game.** A test program playing rumble on the virtual gamepad
   makes the mouse vibrate on time; which games send rumble to it has not been explored.
+- **Run on one desktop.** KDE Plasma on Wayland is where the program is used. What it does on other
+  desktops is set out under [Desktops](#desktops), with what was and was not run there. On
+  compositors where a line along the edge watches for Flow, a drag that starts on that very line
+  of pixels (a scroll bar at the edge of the screen) does not start; a click and scrolling there
+  are passed on.
 - **Checked on one mouse.** Everything was tried on a single MX Master 4. Synthetic tests cover the
   logic; the feel of gestures, vibrations and sounds was judged by one person.
-- **One open question:** the haptic panel may not register while the left button is held down. If
-  so that is the mouse's doing; it has not been confirmed either way.
+- **The haptic panel does not answer while a main button is held.** With the left button down the
+  mouse reports nothing for the panel, however hard it is pressed; the gesture button is reported
+  all the same. So gestures made while a window is being dragged want the gesture button, not the
+  panel. This was read off what the mouse sends, with nothing of this program in between.
 
 ## Development
 

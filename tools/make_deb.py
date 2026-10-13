@@ -28,7 +28,8 @@ DEPENDS = [
     "qml6-module-qtquick", "qml6-module-qtquick-window",                      # the Actions Ring is drawn with Qt Quick ...
     "qml6-module-org-kde-layershell", "liblayershellqtinterface6",            # ... on a layer above the windows
 ]
-RECOMMENDS = ["python3-numpy", "fwupd"]
+RECOMMENDS = ["python3-numpy", "fwupd",
+              "wl-clipboard"]  # Flow reads what was copied through it where the desktop has no clipboard service of its own
 CONTROL = """\
 Package: mxoptions
 Version: {version}

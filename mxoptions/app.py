@@ -2,6 +2,7 @@
 
 import argparse
 import copy
+import json
 import logging
 import os
 import signal
@@ -13,7 +14,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from . import APP_ID, APP_NAME, __version__, config, desktop, device, i18n
+from . import APP_ID, APP_NAME, __version__, config, desktop, device, i18n, paths
 from .engine import Engine, Listener
 from .i18n import _
 
@@ -54,7 +55,20 @@ class Bridge(QObject, Listener):
 
 
 def _socket_name():
-    return f"{APP_ID}-{os.getuid()}"
+    """What the one running copy is reached by: one per user."""
+    user = os.getuid() if hasattr(os, "getuid") else "".join(ch for ch in os.environ.get("USERNAME", "user") if ch.isalnum())
+    return f"{APP_ID}-{user}"
+
+
+def _log_to():
+    """Where the log goes besides the standard error stream: on Windows a program without a console has none,
+    so there it is a file (the last half megabyte, and the one before)."""
+    if sys.platform != "win32":
+        return []
+    from logging.handlers import RotatingFileHandler
+
+    os.makedirs(paths.DATA, exist_ok=True)
+    return [RotatingFileHandler(os.path.join(paths.DATA, f"{APP_ID}.log"), maxBytes=512 * 1024, backupCount=1, encoding="utf-8")]
 
 
 def _notify_running_instance(show):
@@ -67,6 +81,31 @@ def _notify_running_instance(show):
     socket.waitForBytesWritten(300)
     socket.disconnectFromServer()
     return True
+
+
+def _ask_running_instance(name, arguments):
+    """`mxoptions --call`: have the running copy do something its interface for other programs offers, and print
+    what it answers. The exit status is 0 if it was done, 2 if it could not be, 3 if the program is not running."""
+    socket = QLocalSocket()
+    socket.connectToServer(_socket_name())
+    if not socket.waitForConnected(500):
+        print(f"{APP_NAME} is not running", file=sys.stderr)
+        return 3
+    socket.write(b"call " + json.dumps([name, *arguments]).encode("utf-8") + b"\n")
+    answer = b""
+    while not answer.endswith(b"\n") and socket.waitForReadyRead(5000):
+        answer += bytes(socket.readAll())
+    socket.disconnectFromServer()
+    try:
+        done, value = json.loads(answer)
+    except ValueError:
+        print("no answer", file=sys.stderr)
+        return 2
+    if isinstance(value, list):
+        print("\n".join(str(item) for item in value))
+    elif value is not None:
+        print(str(value).lower() if isinstance(value, bool) else value, file=sys.stdout if done else sys.stderr)
+    return 0 if done else 2
 
 
 def _tray_tooltip(state):
@@ -87,10 +126,15 @@ def main(argv=None):
     parser.add_argument("--install", action="store_true", help="add MX Options to the application menu and exit")
     parser.add_argument("--uninstall", action="store_true", help="remove the menu and autostart entries and exit")
     parser.add_argument("--debug", action="store_true", help="verbose logging")
+    parser.add_argument("--call", nargs="+", metavar=("NAME", "ARGUMENT"),
+                        help="ask the running program for something its interface for other programs offers "
+                             "(see docs/API.md), e.g. --call Trigger play_pause, --call Battery")
     parser.add_argument("--version", action="version", version=f"{APP_NAME} {__version__}")
     args = parser.parse_args(argv)
 
-    logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO, format="%(asctime)s %(name)s: %(message)s")
+    streams = [logging.StreamHandler()] if sys.stderr is not None else []
+    logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO, format="%(asctime)s %(name)s: %(message)s",
+                        handlers=streams + _log_to())
     if args.install or args.uninstall:
         desktop.set_launcher(args.install)
         if args.uninstall:
@@ -107,6 +151,8 @@ def main(argv=None):
     app.setApplicationDisplayName(APP_NAME)
     app.setDesktopFileName(APP_ID)
     app.setQuitOnLastWindowClosed(False)
+    if args.call:
+        return _ask_running_instance(args.call[0], args.call[1:])
     if _notify_running_instance(show=not args.background):
         return 0
     if not args.background and os.environ.get("MXOPTIONS_LAUNCHER") and desktop.start_service():
@@ -122,11 +168,11 @@ def main(argv=None):
     from . import api, flow_service
     from .ui import editors, ring, theme, tray_icon
     from .ui.main_window import MainWindow
-    from .ui.ring import RingOverlay
     from .ui.sounds import WheelSounds
     from .ui.store import Store
 
     app.setStyle("Fusion")
+    theme.ensure_icon_theme()
     theme.set_theme(cfg["app"]["theme"], cfg["app"]["accent"])
     theme.apply(app)
     icon = QIcon(desktop.ICON_PATH)
@@ -134,6 +180,7 @@ def main(argv=None):
 
     QLocalServer.removeServer(_socket_name())
     server = QLocalServer(app)
+    server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)  # this user's programs only
     server.listen(_socket_name())
 
     bridge = Bridge()
@@ -147,7 +194,8 @@ def main(argv=None):
     bridge.pressed.connect(store.pressed_changed)
     bridge.gesture.connect(store.gesture_changed)
 
-    overlay = RingOverlay(app)
+    overlay = ring.create_overlay(app)
+    overlay.set_look(cfg["app"]["theme"], cfg["app"]["accent"], cfg["app"]["language"])
     overlay.configure(cfg["ring"])
     editors.test_runner = engine.trigger_action
     applied = {"look": (cfg["app"]["theme"], cfg["app"]["accent"]), "ring": None}
@@ -159,6 +207,7 @@ def main(argv=None):
             theme.set_theme(*look)
             ring.clear_icon_cache()
             theme.apply(app)
+            overlay.set_look(*look, store.cfg["app"]["language"])
             overlay.refresh()
         if store.cfg["ring"] != applied["ring"]:
             applied["ring"] = copy.deepcopy(store.cfg["ring"])
@@ -192,17 +241,33 @@ def main(argv=None):
     bridge.event.connect(engine_event)
     app.setQuitOnLastWindowClosed(not stays)
 
+    def instance_message(connection):
+        """Another copy of the program was started: it wants the window shown, or passes on an `--call`."""
+        message = bytes(connection.readAll())
+        if message.startswith(b"show"):
+            window.show_and_raise()
+        elif message.startswith(b"call "):
+            try:
+                name, *arguments = json.loads(message[5:])
+                if not store.cfg["app"]["api"]:  # the same switch as for the interface on the session bus
+                    answer = (False, "other programs are not let in (see the settings: Device & app)")
+                else:
+                    answer = api.call(service.api, str(name), [str(value) for value in arguments])
+            except (ValueError, TypeError):
+                answer = (False, "not understood")
+            connection.write(json.dumps(answer, default=str).encode("utf-8") + b"\n")
+            connection.flush()
+
     def read_instance_message():
         connection = server.nextPendingConnection()
         if connection:
-            connection.readyRead.connect(
-                lambda: window.show_and_raise() if bytes(connection.readAll()).startswith(b"show") else None)
+            connection.readyRead.connect(lambda: instance_message(connection))
             connection.disconnected.connect(connection.deleteLater)
 
     server.newConnection.connect(read_instance_message)
 
     charging = (device.BATTERY_CHARGING, device.BATTERY_ALMOST_FULL, device.BATTERY_SLOW_CHARGE)
-    if tray_icon.install():  # its drawings go into the icon theme, where the panel finds them
+    if sys.platform != "win32" and tray_icon.install():  # its drawings go into the icon theme, where the panel finds them
         tray_icon.announce()
     shown = {"tray": None}
 
@@ -249,6 +314,8 @@ def main(argv=None):
 
     def shutdown():
         overlay.close()
+        if hasattr(overlay, "shutdown"):  # it lives in a program of its own: that one ends with this one
+            overlay.shutdown()
         store.flow.close()
         store.flush()
         engine.stop()

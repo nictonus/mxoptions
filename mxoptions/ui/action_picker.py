@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 
 from .. import actions, config, gestures
 from ..i18n import _
-from . import ring, theme
+from . import icons, ring, theme
 from .editors import MacroDialog, ScriptDialog
 from .recorder import ShortcutRecorder
 from .widgets import ElidedButton, ElidedLabel, InfoButton, titled, ui_scale
@@ -90,12 +90,8 @@ class ActionList(QWidget):
         self._sections = []  # (category label, [(row, extra widget shown under it or None)])
         self._rows = {}  # preset id -> row
         self._current = None
-        have_kde = _kde_shortcuts_available()
         for category, title in actions.CATEGORIES:
-            presets = [
-                p for p in actions.PRESETS
-                if p.category == category and p.id not in exclude and (have_kde or p.action.get("type") != "shortcut")
-            ]
+            presets = [p for p in actions.PRESETS if p.category == category and p.id not in exclude and p.available]
             if not presets:
                 continue
             rows = []
@@ -113,7 +109,7 @@ class ActionList(QWidget):
         self._body.addWidget(self.recorder)
         self.command_row = self._row(_("Run command"), "system-run")
         self.command = QLineEdit()
-        self.command.setPlaceholderText(_("e.g. konsole or a script path"))
+        self.command.setPlaceholderText(_("e.g. firefox or a script path"))
         self._body.addWidget(self.command)
         self.script_row = self._row(_("Script"), "text-x-script")
         self.script_summary = self._summary()
@@ -167,7 +163,7 @@ class ActionList(QWidget):
         row.setObjectName("actionRow")
         row.setCheckable(True)
         row.setCursor(Qt.CursorShape.PointingHandCursor)
-        row.setIcon(QIcon.fromTheme(ring.theme_icon_name(icon) or icon))
+        row.setIcon(icons.icon(ring.theme_icon_name(icon) or icon))
         row.setIconSize(QSize(18, 18))
         self._group.addButton(row)
         self._body.addWidget(row)
@@ -250,21 +246,6 @@ class ActionList(QWidget):
                 any_visible = any_visible or visible
             label.setVisible(any_visible)
         self._sync_custom()
-
-
-_kde_available = None
-
-
-def _kde_shortcuts_available():
-    global _kde_available
-    if _kde_available is None:
-        try:
-            from PySide6.QtDBus import QDBusConnection
-
-            _kde_available = bool(QDBusConnection.sessionBus().interface().isServiceRegistered("org.kde.kglobalaccel").value())
-        except Exception:
-            _kde_available = False
-    return _kde_available
 
 
 class ActionPicker(QFrame):

@@ -10,6 +10,14 @@ STRINGS = {
     "Charging · {}%": "Заряджається · {}%",
     "Fully charged": "Повністю заряджено",
     "No mouse": "Миші немає",
+    "{} is running too. Two programs that set the same mouse up undo each other's work: quit it while you use MX Options.":
+        "{} теж працює. Дві програми, що налаштовують ту саму мишу, скасовують роботу одна одної: закрийте її на час "
+        "роботи з MX Options.",
+    " and ": " і ",
+    "On Windows its service (OptionsPlusUpdaterService) starts it again unless that is stopped as well.":
+        "У Windows її служба (OptionsPlusUpdaterService) запускає її знову, якщо не зупинити й службу.",
+    "logiops is a system service: sudo systemctl disable --now logid":
+        "logiops — системна служба: sudo systemctl disable --now logid",
     "Looking for your mouse… Turn it on and make sure its receiver is plugged in.":
         "Шукаю мишу… Увімкніть її та перевірте, чи вставлено ресівер.",
     "{} is asleep or out of range. Move it to wake it up; your settings are applied automatically.":
@@ -39,7 +47,7 @@ STRINGS = {
     "Custom": "Власні",
     "Keyboard shortcut": "Комбінація клавіш",
     "Run command": "Виконати команду",
-    "e.g. konsole or a script path": "напр. konsole або шлях до скрипта",
+    "e.g. firefox or a script path": "напр. firefox або шлях до скрипта",
     "Press the shortcut…": "Натисніть комбінацію…",
     "Click to record a shortcut": "Клацніть, щоб записати комбінацію",
     "Back": "Назад",
@@ -78,7 +86,7 @@ STRINGS = {
     "Desktop below": "Стільниця нижче",
     "Switch window": "Перемкнути вікно",
     "Application launcher": "Меню програм",
-    "Search (KRunner)": "Пошук (KRunner)",
+    "Search or run": "Пошук і запуск",
     "Close window": "Закрити вікно",
     "Maximize window": "Розгорнути вікно",
     "Minimize window": "Згорнути вікно",
@@ -194,6 +202,12 @@ STRINGS = {
         "Ігри вібрують геймпадами, а не мишами. Якщо це ввімкнено, MX Options додає в систему віртуальний геймпад; "
         "те, що гра надсилає йому, відтворюється на миші. Гра при цьому бачить контролер: деякі через це показують "
         "підказки для геймпада, а деякі вібрують лише тим контролером, яким грають. Вимкніть, якщо гра поводиться дивно.",
+    "Windows lets a program add a game controller only through a driver made for that. Install ViGEmBus once ({}), then "
+    "switch this on.":
+        "Windows дає програмі додати ігровий контролер лише через спеціальний драйвер. Встановіть ViGEmBus один раз ({}), "
+        "потім увімкніть це.",
+    "The part of this program that talks to the controller driver (ViGEmClient.dll) is missing here.":
+        "Тут бракує частини програми, що говорить із драйвером контролера (ViGEmClient.dll).",
     "Vibrate with games": "Вібрувати разом з іграми",
     "Weak rumble": "Слабка вібрація",
     "Medium rumble": "Середня вібрація",
@@ -244,6 +258,9 @@ STRINGS = {
     "Pie": "Пиріг",
     "Tiles": "Плитки",
     "Dial": "Регулятор",
+    "For volume, brightness, zoom and the like choose Dial: one bubble that the scroll wheel turns both ways, like a slider.":
+        "Для гучності, яскравості, масштабу тощо оберіть «Регулятор»: одна бульбашка, яку колесо крутить в обидва боки, "
+        "як слайдер.",
     "Dials": "Регулятори",
     "Point at the bubble and turn the scroll wheel. The ring stays open while you adjust.":
         "Наведіть на бульбашку й крутіть колесо. Кільце лишається відкритим, поки ви регулюєте.",
@@ -466,10 +483,14 @@ STRINGS = {
     "each of them once with the Easy-Switch button.":
         "З'єднано з {name}, але обидва комп'ютери вважають, що вони на каналі Easy-Switch {channel}. Перемкніть мишу "
         "на кожен із них по разу кнопкою Easy-Switch.",
-    "Connected to {}. The screen edge is only watched on KDE Plasma: here, give a button, a gesture or a ring bubble "
-    "the action “Move to the other computer (Flow)”.":
-        "З'єднано з {}. За краєм екрана програма стежить лише в KDE Plasma: тут призначте кнопці, жесту або бульбашці "
-        "кільця дію «Перейти на інший комп'ютер (Flow)».",
+    "Connected to {}. This desktop does not let a program watch the screen edge: here, give a button, a gesture or a "
+    "ring bubble the action “Move to the other computer (Flow)”.":
+        "З'єднано з {}. Цей робочий стіл не дає програмі стежити за краєм екрана: тут призначте кнопці, жесту або "
+        "бульбашці кільця дію «Перейти на інший комп'ютер (Flow)».",
+    "Connected to {}. Push the pointer past the lit edge to cross. A line one pixel wide along that edge is what feels "
+    "the pointer here; a click on it is passed on to what is under it.":
+        "З'єднано з {}. Щоб перейти, проштовхніть вказівник за підсвічений край. Вказівник тут відчуває лінія в один "
+        "піксель уздовж цього краю; клік по ній передається тому, що під нею.",
     "Connected to {}. Push the pointer past the lit edge to cross.":
         "З'єднано з {}. Щоб перейти, проведіть вказівник за підсвічений край.",
 
@@ -543,9 +564,12 @@ STRINGS = {
     "What you copied on one computer can be pasted on the other after crossing.":
         "Скопійоване на одному комп'ютері можна вставити на іншому після переходу.",
     "Copied files and folders": "Скопійовані файли й теки",
-    "Only text can cross here: files and pictures need KDE's clipboard service (the Python bindings of KGuiAddons).":
-        "Тут переходить лише текст: для файлів і зображень потрібна служба буфера обміну KDE (Python-прив'язки "
-        "KGuiAddons).",
+    "Only text can cross here. For files and pictures install wl-clipboard.":
+        "Тут переходить лише текст. Для файлів і зображень встановіть wl-clipboard.",
+    "This desktop does not let a program in the background see what was copied. Install wl-clipboard, then start "
+    "MX Options again.":
+        "Цей робочий стіл не дає програмі у фоні бачити скопійоване. Встановіть wl-clipboard і запустіть MX Options "
+        "знову.",
     "Largest amount in one go": "Найбільший обсяг за раз",
     "More than this stays behind, so that a huge folder left on the clipboard is not sent by accident.":
         "Більше за це лишається, щоб випадково не відправити величезну теку, яка просто була в буфері.",
@@ -607,6 +631,10 @@ STRINGS = {
     "and follow buttons, gestures and the wheel over D-Bus. See API.md in the documentation.":
         "Скрипти й програми можуть через D-Bus запускати вібрації та дії, показувати власне кільце, читати й "
         "змінювати налаштування та стежити за кнопками, жестами й колесом. Опис — у файлі API.md у документації.",
+    "Scripts and apps can play vibrations, run actions, show their own ring and read and change settings with "
+    "“mxoptions --call”. See API.md in the documentation.":
+        "Скрипти й програми можуть вмикати вібрацію, виконувати дії, показувати власне кільце, читати й змінювати "
+        "налаштування командою «mxoptions --call». Див. API.md у документації.",
     "written by Claude, Anthropic's AI model": "написано Claude, ШІ-моделлю Anthropic",
     "Signal to another program": "Сигнал іншій програмі",
     "a name that program listens for": "назва, яку чекає та програма",

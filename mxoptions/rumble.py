@@ -17,7 +17,7 @@ import time
 
 from evdev import AbsInfo, ecodes as e
 
-from .vinput import _Device
+from .vinput_uinput import _Device
 
 log = logging.getLogger(__name__)
 

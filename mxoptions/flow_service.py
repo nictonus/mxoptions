@@ -1,118 +1,30 @@
 """Flow, tied to the mouse and the desktop (flow.py has the idea and the link).
 
-Watching the edge of the screen is left to KWin: a few lines of script, loaded over D-Bus while
-Flow is on, say when the pointer comes to rest against the chosen edge and when it leaves again.
-How hard it is then pushed on is measured from the mouse itself, by the engine. Elsewhere there
-is no such watcher, and the "Move to the other computer" action is the way across."""
+Watching the edge of the screen is left to whatever this desktop offers for it (flow_edges.py):
+it says when the pointer comes to rest against the chosen edge and when it leaves again. How
+hard it is then pushed on is measured from the mouse itself, by the engine. Where the pointer
+cannot be watched, the "Move to the other computer" action is the way across."""
 
 import collections
 import copy
-import json
 import logging
-import os
 import secrets
 import socket
-import tempfile
 import time
 
-from PySide6.QtCore import ClassInfo, QObject, QTimer, Signal, Slot
-from PySide6.QtDBus import QDBus, QDBusConnection, QDBusMessage, QDBusServiceWatcher
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtGui import QCursor, QGuiApplication
 
-from . import __version__, clipboard, flow, flow_files, flow_pairing, vinput
+from . import __version__, clipboard, environment, flow, flow_edges, flow_files, flow_pairing, vinput
 
 log = logging.getLogger(__name__)
 
-SERVICE = "org.mxoptions.Flow"
-PATH = "/org/mxoptions/Flow"
-INTERFACE = "org.mxoptions.Flow1"
-KWIN = "org.kde.KWin"
-SCRIPT_NAME = "mxoptions-flow"
 ARRIVAL_QUIET = 1.5  # s after the mouse arrived during which the edge does not send it back
 ARRIVAL_WAIT = 12.0  # s the mouse may take to arrive once the other computer has sent it
 OFFER_AGE = 4.0      # s after which a computer that stopped announcing its pairing code is forgotten
 MIB = 1024 * 1024
 RATE_WINDOW = 10.0       # s the speed of a file transfer is averaged over
 RESEND_FOR = 120.0       # s after a crossing during which what was copied is sent again if the link had failed it
-# The script only looks at where the pointer is. For every edge that leads to another computer it
-# speaks up when the pointer reaches it (the outer edge: one no other screen continues behind), when
-# it slides along it, and when it leaves.
-_EDGE_SCRIPT = """\
-// Loaded by MX Options while Flow is on: says when the pointer rests against an edge of the desktop
-// that another computer is behind.
-var EDGES = %(edges)s, at = {}, last = {};
-// The screen the pointer is on and how far the pointer is from its EDGE side, if no other screen continues there.
-function probe(pos, EDGE) {
-    var screens = workspace.screens;
-    for (var i = 0; i < screens.length; i++) {
-        var g = screens[i].geometry;
-        if (pos.x < g.x || pos.x >= g.x + g.width || pos.y < g.y || pos.y >= g.y + g.height) continue;
-        var away = EDGE == "right" ? g.x + g.width - 1 - pos.x : EDGE == "left" ? pos.x - g.x
-                 : EDGE == "top" ? pos.y - g.y : g.y + g.height - 1 - pos.y;
-        if (away > 6) return null;
-        var bx = EDGE == "right" ? g.x + g.width + 1 : EDGE == "left" ? g.x - 2 : pos.x;
-        var by = EDGE == "bottom" ? g.y + g.height + 1 : EDGE == "top" ? g.y - 2 : pos.y;
-        for (var j = 0; j < screens.length; j++) {
-            var o = screens[j].geometry;
-            if (j != i && bx >= o.x && bx < o.x + o.width && by >= o.y && by < o.y + o.height) return null;
-        }
-        return {screen: g, away: away};
-    }
-    return null;
-}
-function tell(report) {
-    callDBus("%(service)s", "%(path)s", "%(interface)s", "Edge", JSON.stringify(report));
-}
-workspace.cursorPosChanged.connect(function () {
-    var pos = workspace.cursorPos;
-    for (var k = 0; k < EDGES.length; k++) {
-        var EDGE = EDGES[k];
-        var hit = probe(pos, EDGE);
-        // Reaching the edge takes touching it; leaving it takes a few pixels, because an edge that the desktop
-        // uses for something of its own pushes the pointer a pixel back every time it is touched.
-        if (hit && (at[EDGE] || hit.away <= 1.5)) {
-            var along = (EDGE == "left" || EDGE == "right") ? pos.y : pos.x;
-            if (!at[EDGE] || Math.abs(along - last[EDGE]) >= 8) {
-                var front = workspace.activeWindow, g = hit.screen;
-                at[EDGE] = true;
-                last[EDGE] = along;
-                tell({at: true, edge: EDGE, x: pos.x, y: pos.y, screen: [g.x, g.y, g.width, g.height],
-                      full: !!(front && front.fullScreen)});
-            }
-        } else if (at[EDGE]) {
-            at[EDGE] = false;
-            tell({at: false, edge: EDGE});
-        }
-    }
-});
-"""
-
-
-def _kwin(method, *args):
-    """Call KWin's script loader; the reply value, or None when there is no KWin to ask."""
-    message = QDBusMessage.createMethodCall(KWIN, "/Scripting", "org.kde.kwin.Scripting", method)
-    message.setArguments(list(args))
-    reply = QDBusConnection.sessionBus().call(message, QDBus.CallMode.Block, 2000)
-    if reply.type() != QDBusMessage.MessageType.ReplyMessage:
-        return None
-    values = reply.arguments()
-    return values[0] if values else True
-
-
-def kwin_running():
-    interface = QDBusConnection.sessionBus().interface()
-    return bool(interface and interface.isServiceRegistered(KWIN).value())
-
-
-@ClassInfo({"D-Bus Interface": INTERFACE})
-class _EdgeSink(QObject):
-    """What the KWin script calls."""
-
-    reached = Signal(str)
-
-    @Slot(str)
-    def Edge(self, report):
-        self.reached.emit(report)
 
 
 class FlowService(QObject):
@@ -126,8 +38,7 @@ class FlowService(QObject):
         self._problem = ""         # why this computer cannot listen
         self._pointer = None       # vinput.AbsolutePointer while Flow is on
         self._applied = None       # the settings in force
-        self._edges = frozenset()  # the edges KWin watches for us
-        self._exported = False
+        self._watcher = None       # flow_edges: what watches the screen edges here (None: nothing can)
         self._armed = None         # the pairing whose edge the pointer rests against: the engine is measuring the push
         self._leaving = None       # the pairing whose computer the mouse is being sent to
         self._along = None         # where along the edge the pointer is, 0..1
@@ -144,17 +55,16 @@ class FlowService(QObject):
         self._offers = {}          # computers nearby showing a code: id -> {"id", "name", "address", "port", "seen"}
         self._pair_error = ""      # why the last attempt to pair failed: "code", "closed", "unreachable"
         self._watching = False     # the settings page is open and lists computers showing a code
-        self._sink = _EdgeSink(self)
-        self._sink.reached.connect(self._edge_report)
+        self._watcher = flow_edges.create(self, click=self._click_through, scroll=self._scroll_through)
+        if self._watcher is not None:
+            self._watcher.reported.connect(self._edge_report)
+            self._watcher.changed.connect(self.changed.emit)
         self._from_link.connect(self._on_link)
         self.clipboard = clipboard  # read(), write() and signature() of what is copied
         self.link = flow.Link(self._from_link.emit, staging=flow_files.STAGING)
         self.link.start()
         self._tick = QTimer(self, interval=1000)  # while a code is on show or offers are listed: keep them current
         self._tick.timeout.connect(self._second_passed)
-        watcher = QDBusServiceWatcher(KWIN, QDBusConnection.sessionBus(),
-                                      QDBusServiceWatcher.WatchModeFlag.WatchForRegistration, self)
-        watcher.serviceRegistered.connect(lambda _name: self._kwin_started())
         if not store.cfg["flow"]["id"]:
             store.set("flow", "id", secrets.token_hex(8))
         store.changed.connect(self._configure)
@@ -203,7 +113,9 @@ class FlowService(QObject):
             "problem": self._problem,
             "channel": cfg["channel"],
             "here": bool(self.store.state["connected"]),   # the mouse is on this computer
-            "edges": bool(self._edges),                     # the screen edges are being watched
+            "edges": bool(self._watcher and self._watcher.watching),  # the screen edges are being watched
+            "edge_watch": self._watcher.name if self._watcher else "",  # by what (flow_edges.py)
+            "copies": self.clipboard.available(),           # what was copied can cross at all
             "rich": self.clipboard.rich(),                  # pictures and files can cross, not only text
             "pairing": pairing,
             "transfer": self._transfer_status(),
@@ -317,7 +229,8 @@ class FlowService(QObject):
         wanted = (on, cfg["port"], tuple((entry["key"], entry["address"], entry["edge"]) for _pair, entry in entries))
         self.link.accept_files(cfg["files_max_mb"] * MIB if on and cfg["files"] and self.clipboard.rich() else None)
         if wanted == self._applied:
-            self._send_status()  # when an edge was chosen may have changed all the same
+            self._watch_edges(on, entries)  # how it is watched may have changed,
+            self._send_status()             # and when an edge was chosen, all the same
             return
         previous, self._applied = self._applied, wanted
         if previous is not None and not self._adopting:
@@ -331,7 +244,7 @@ class FlowService(QObject):
                 self.store.set("flow", "peers", peers)
         if on:
             self.link.configure([{"key": entry["key"], "address": entry["address"]} for _pair, entry in entries], cfg["port"])
-            if self._pointer is None:
+            if self._pointer is None and not environment.places_pointer():
                 self._pointer = vinput.create_pointer()
         else:
             self.link.configure(None)
@@ -340,7 +253,7 @@ class FlowService(QObject):
                 self._pointer.close()
                 self._pointer = None
         self._disarm()
-        self._watch_edges(frozenset(entry["edge"] for _pair, entry in entries) if on else frozenset())
+        self._watch_edges(on, entries)
         self._send_status()
         self.changed.emit()
 
@@ -367,59 +280,32 @@ class FlowService(QObject):
 
     # -- the screen edges ---------------------------------------------------------------
 
-    def _export(self, wanted):
-        bus = QDBusConnection.sessionBus()
-        if wanted and not self._exported:
-            if not bus.registerObject(PATH, self._sink, QDBusConnection.RegisterOption.ExportAllSlots) or not bus.registerService(SERVICE):
-                log.warning("flow: cannot be reached over D-Bus: %s", bus.lastError().message())
-                bus.unregisterObject(PATH)
-                return False
-            self._exported = True
-        elif not wanted and self._exported:
-            bus.unregisterService(SERVICE)
-            bus.unregisterObject(PATH)
-            self._exported = False
-        return self._exported
+    def _watch_edges(self, on, entries=()):
+        if self._watcher is not None:
+            cfg = self.store.cfg["flow"]
+            was = self._watcher.watching
+            self._watcher.watch(frozenset(entry["edge"] for _pair, entry in entries) if on else frozenset(),
+                                corner=cfg["corner"] / 100.0, fullscreen=cfg["fullscreen"])
+            if was != self._watcher.watching:
+                self.changed.emit()
 
-    def _watch_edges(self, edges):
-        if edges == self._edges:
-            return
-        if self._edges:
-            _kwin("unloadScript", SCRIPT_NAME)
-            self._edges = frozenset()
-        if not edges:
-            self._export(False)
-            return
-        if not self._export(True) or not kwin_running():
-            return
-        path = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir(), SCRIPT_NAME + ".js")
-        try:
-            with open(path, "w") as f:
-                f.write(_EDGE_SCRIPT % {"edges": json.dumps(sorted(edges)), "service": SERVICE, "path": PATH, "interface": INTERFACE})
-        except OSError as e:
-            log.warning("flow: could not write the edge script: %s", e)
-            return
-        _kwin("unloadScript", SCRIPT_NAME)  # one left behind by a copy of the program that did not exit cleanly
-        loaded = _kwin("loadScript", path, SCRIPT_NAME)
-        if loaded is None or loaded < 0:
-            log.warning("flow: KWin did not take the edge script")
-            return
-        _kwin("start")  # runs what is loaded and not running yet
-        self._edges = edges
-        log.info("flow: watching the %s edge", " and the ".join(sorted(edges)))
+    def _click_through(self, button):
+        """A click that landed on the watcher's line along the edge, repeated for what is under it."""
+        keys = getattr(self.store.engine, "vinput", None)
+        if keys is not None:
+            keys.tap([button])
 
-    def _kwin_started(self):
-        """KWin came up (again): what it had loaded for us is gone."""
-        self._edges = frozenset()
-        if self._on():
-            self._watch_edges(frozenset(entry["edge"] for _pair, entry in self._entries()))
-            self.changed.emit()
+    def _scroll_through(self, across, up):
+        keys = getattr(self.store.engine, "vinput", None)
+        if keys is not None:
+            keys.hscroll(across)
+            keys.scroll(up)
 
     def _edge_report(self, report):
         """The pointer came to an edge, slid along it, or left it."""
         cfg = self.store.cfg["flow"]
         try:
-            data = json.loads(report)
+            data = report
             edge = data["edge"]
             pair = next((found for found, entry in self._entries() if entry["edge"] == edge), None)
             if not data.get("at"):
@@ -668,11 +554,11 @@ class FlowService(QObject):
             self._disarm()
             self.store.engine.expect_mouse()
             edge, along = message.get("edge"), message.get("at")
-            if edge in flow.OPPOSITE and isinstance(along, (int, float)) and not isinstance(along, bool) and self._pointer:
+            if edge in flow.OPPOSITE and isinstance(along, (int, float)) and not isinstance(along, bool):
                 screens = [(area.x(), area.y(), area.width(), area.height())
                            for area in (screen.geometry() for screen in QGuiApplication.screens())]
                 if screens:  # come in through the edge facing the one it left by
-                    self._pointer.move(flow.entry_point(flow.OPPOSITE[edge], along, screens), flow.bounds(screens))
+                    self._put_pointer(flow.entry_point(flow.OPPOSITE[edge], along, screens), screens)
         elif kind == "clipboard" and cfg["clipboard"]:
             text, image = message.get("text"), message.get("data")
             if message.get("mime") == clipboard.PNG and isinstance(image, bytes) and image:
@@ -694,10 +580,18 @@ class FlowService(QObject):
         elif kind == "cue" and message.get("what") in ("arrived", "failed"):
             self._cue(message["what"], None)  # the mouse is here, if anywhere: play it, do not pass it on again
 
+    def _put_pointer(self, point, screens):
+        """Put the pointer at ``point`` of the desktop made of ``screens``."""
+        if environment.places_pointer():
+            QCursor.setPos(int(point[0]), int(point[1]))  # an X server and Windows let any program do that
+        elif self._pointer is not None:
+            self._pointer.move(point, flow.bounds(screens))
+
     def close(self):
         self._tick.stop()
         self._disarm()
-        self._watch_edges(frozenset())
+        if self._watcher is not None:
+            self._watcher.close()
         self.link.stop()
         if self._pointer is not None:
             self._pointer.close()

@@ -6,19 +6,22 @@ A bubble is ``{"label", "icon", "color"}`` plus one of
     "scroll"    a dial id from actions.SCROLLS (turn the wheel while pointing at it).
 The menu can be drawn as free bubbles, as a pie or as a grid of tiles."""
 
+import json
 import logging
 import math
 import os
+import sys
 
-from PySide6.QtCore import QEasingCurve, QObject, QPointF, QRectF, Qt, QTimer, QUrl, QVariantAnimation, Signal, Slot
-from PySide6.QtGui import QColor, QFont, QFontMetricsF, QGuiApplication, QIcon, QPainter, QPainterPath, QPen
+from PySide6.QtCore import (QEasingCurve, QObject, QPointF, QProcess, QProcessEnvironment, QRect, QRectF, Qt, QTimer, QUrl,
+                            QVariantAnimation, Signal, Slot)
+from PySide6.QtGui import QColor, QCursor, QFont, QFontMetricsF, QGuiApplication, QIcon, QPainter, QPainterPath, QPen
 from PySide6.QtQml import QQmlApplicationEngine, qmlRegisterType
 from PySide6.QtQuick import QQuickItem, QQuickPaintedItem
 from PySide6.QtWidgets import QWidget
 
-from .. import actions, device
+from .. import actions, device, environment, x11
 from ..i18n import _
-from . import theme
+from . import icons, theme
 
 log = logging.getLogger(__name__)
 
@@ -30,6 +33,17 @@ CENTER = 0.125          # centre bubble radius
 FOLDER_DWELL = 330      # ms pointing at a folder (button held) before it opens
 IDLE_TIMEOUT = 20000    # an untouched ring closes by itself
 WHEEL_STEP = 120        # wheel units per dial step
+# How the overlay gets above the windows (see RingOverlay)
+LAYER, X11, XWAYLAND, WINDOW = "layer", "x11", "xwayland", "window"
+# ms the pointer has to turn up in the new window before the ring opens mid-screen
+PLACE_WAIT = {LAYER: 140, XWAYLAND: 140, WINDOW: 450}
+AWAY_TIMEOUT = 1500      # ms the pointer may be off a window no larger than the menu before the menu closes
+FOCUS_AWAY = 350         # ms the focus may be elsewhere before a menu in an ordinary window closes
+# ms between the overlay going and the action: the application below has to be the one that gets it, and after
+# WINDOW has its focus back
+ACTION_DELAY = {LAYER: 40, X11: 40, XWAYLAND: 40, WINDOW: 160}
+HELPER_RESTARTS = 5      # times the overlay's own program is started again after dying, before it is given up
+HELPER_PLATFORM = "xcb"  # what the overlay's own program has Qt talk to: the X server
 
 
 def is_folder(bubble):
@@ -77,7 +91,7 @@ _STAND_INS = {
 def theme_icon_name(name):
     """``name`` if the icon theme has it, else its stand-in, else None."""
     for candidate in (name, _STAND_INS.get(name)):
-        if candidate and QIcon.hasThemeIcon(candidate):
+        if candidate and icons.has(candidate):
             return candidate
     return None
 
@@ -89,7 +103,7 @@ def themed_icon(spec):
             icon = QIcon(spec) if os.path.isfile(spec) else None
         else:
             name = theme_icon_name(spec)
-            icon = QIcon.fromTheme(name) if name else None
+            icon = icons.icon(name) if name else None
         _icons[spec] = icon if icon is not None and not icon.isNull() else None
     return _icons[spec]
 
@@ -503,20 +517,48 @@ class RingItem(QQuickPaintedItem):
 _registered = False
 
 
+def overlay_kind():
+    """How the overlay gets above the windows on this desktop. MXOPTIONS_RING names a kind to use instead."""
+    forced = os.environ.get("MXOPTIONS_RING", "").strip().lower()
+    if forced in (LAYER, X11, XWAYLAND, WINDOW):
+        return forced
+    if environment.session() in ("x11", "windows"):
+        return X11
+    if "zwlr_layer_shell_v1" in environment.wayland_globals():
+        return LAYER
+    return XWAYLAND if os.environ.get("DISPLAY") else WINDOW  # the X server a Wayland session keeps for X11 programs
+
+
 class RingOverlay(QObject):
     """Shows the menu under the cursor; the cursor stays free and picks a bubble by pointing at it.
 
     Hold the button, point at a bubble, release -> it runs (resting on a folder opens it).
     Tap the button -> the menu stays open; click a bubble, or click elsewhere to dismiss.
-    Turning the wheel or the thumb wheel over a dial adjusts it without closing the menu."""
+    Turning the wheel or the thumb wheel over a dial adjusts it without closing the menu.
+
+    The menu is drawn in a see-through window over everything else, and what that window is depends
+    on the desktop (``kind``):
+      LAYER   Wayland with the layer-shell protocol (KDE Plasma, sway, Hyprland, ...): a surface on the
+              layer above all windows, which takes no focus. Where the pointer is shows once the
+              pointer moves in it, which is at once.
+      X11     X11, and Windows: a window the window manager leaves alone, over the screen the pointer is
+              on. Without a compositing manager (on X11) windows cannot be see-through: then it is as
+              large as the menu only.
+      XWAYLAND  Wayland without that protocol (GNOME): the same kind of window, on the X server such a
+              session keeps for X11 programs. It takes no focus either, and it is not animated; where the
+              pointer is shows once the pointer moves in it. This program being a Wayland one, the overlay
+              then lives in a program of its own (ring_helper.py), which RingProxy stands for here.
+      WINDOW  Wayland with neither: an ordinary maximised window. It takes the focus while it is open,
+              and the desktop may animate it."""
 
     triggered = Signal(object)  # action to run
     cue = Signal(int)           # haptic waveform to play
     opened = Signal(bool)       # the menu appeared / went away
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, kind=None):
         super().__init__(parent)
         self.available = False
+        self.kind = kind or overlay_kind()
         self._root = []
         self._shown = []        # the bubbles on screen at the top level: the user's ring, or a visitor's
         self._path = []         # folders entered, outermost first
@@ -532,7 +574,11 @@ class RingOverlay(QObject):
         self._angle = 0.0
         self._window = None
         self._ring = None
-        self._place_timer = QTimer(self, singleShot=True, interval=140)
+        self._was_active = False  # WINDOW: the window has had the focus since it opened
+        self._small = False       # X11 without compositing: the window is no larger than the menu
+        self._away_timer = QTimer(self, singleShot=True, interval=AWAY_TIMEOUT)
+        self._away_timer.timeout.connect(self.close)
+        self._place_timer = QTimer(self, singleShot=True, interval=PLACE_WAIT[LAYER])
         self._place_timer.timeout.connect(self._place_fallback)
         self._idle_timer = QTimer(self, singleShot=True, interval=IDLE_TIMEOUT)
         self._idle_timer.timeout.connect(self.close)
@@ -551,17 +597,36 @@ class RingOverlay(QObject):
         if not _registered:
             qmlRegisterType(RingItem, "MXOptions", 1, 0, "RingItem")
             _registered = True
-        self._engine = QQmlApplicationEngine(self)
-        self._engine.warnings.connect(lambda warnings: [log.warning("ring: %s", w.toString()) for w in warnings])
-        self._engine.rootContext().setContextProperty("overlay", self)
-        self._engine.load(QUrl.fromLocalFile(os.path.join(os.path.dirname(__file__), "ring.qml")))
-        roots = self._engine.rootObjects()
+        roots = []
+        for kind in ((LAYER, WINDOW) if self.kind == LAYER else (self.kind,)):
+            self._engine = QQmlApplicationEngine(self)
+            self._engine.warnings.connect(lambda warnings: [log.warning("ring: %s", w.toString()) for w in warnings])
+            self._engine.rootContext().setContextProperty("overlay", self)
+            self._engine.load(QUrl.fromLocalFile(os.path.join(os.path.dirname(__file__), "ring.qml" if kind == LAYER else "ring_window.qml")))
+            roots = self._engine.rootObjects()
+            if roots:
+                self.kind = kind
+                break
+            log.warning("ring: no overlay of the %s kind%s", kind, " (the layer-shell QML module is not installed?)" if kind == LAYER else "")
         if not roots:
-            log.warning("Actions Ring overlay unavailable (layer-shell QML module missing?)")
+            log.warning("Actions Ring overlay unavailable")
             return
         self._window = roots[0]
+        frameless = Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
+        if self.kind in (X11, XWAYLAND):
+            # Tool: Windows gives such a window no button on its taskbar
+            self._window.setFlags(frameless | Qt.WindowType.Tool | Qt.WindowType.X11BypassWindowManagerHint
+                                  | Qt.WindowType.WindowDoesNotAcceptFocus)
+        elif self.kind == WINDOW:
+            self._window.setFlags(frameless)
+            self._window.activeChanged.connect(self._focus_changed)
         self._ring = self._window.findChild(QQuickItem, "ring")
         self.available = isinstance(self._ring, RingItem)
+        log.info("ring: overlay of the %s kind", self.kind)
+
+    def set_look(self, theme_name, accent, language):
+        """The colours and the language in use. This overlay shares them with the rest of the program;
+        RingProxy passes them on."""
 
     def configure(self, ring):
         """Take the "ring" section of the configuration."""
@@ -634,14 +699,78 @@ class RingOverlay(QObject):
         self._ring.set_progress(0.0)
         self._show_level(animate=False)
         self._ring.setProperty("shown", False)
-        self._window.setVisible(True)
-        self._place_timer.start()
+        self._map()
         self._idle_timer.start()
         self.cue.emit(device.WAVE_SUBTLE)
         self.opened.emit(True)
 
+    def _map(self):
+        """Bring the window up, and the menu to the pointer at once where the desktop says where that is."""
+        window = self._window
+        if self.kind == X11:
+            where = QCursor.pos()
+            area = (QGuiApplication.screenAt(where) or QGuiApplication.primaryScreen()).geometry()
+            self._small = sys.platform != "win32" and not x11.compositing()  # Windows always composites
+            if not self._small:
+                window.setColor(QColor(0, 0, 0, 0))
+            else:  # nothing can be seen through: a panel of the menu's size, in the colour of the settings window
+                side = min(int(self._size) + 12, area.width(), area.height())
+                left = min(max(where.x() - side // 2, area.left()), area.right() + 1 - side)
+                top = min(max(where.y() - side // 2, area.top()), area.bottom() + 1 - side)
+                area = QRect(left, top, side, side)
+                window.setColor(QColor(theme.BG))
+            window.setGeometry(area)
+            window.setVisible(True)
+            window.raise_()
+            self._place(where.x() - area.x(), where.y() - area.y())
+        elif self.kind == XWAYLAND:
+            # Where the pointer is, an X11 program in a Wayland session is not told until the pointer is over one
+            # of its windows: over every screen, then, and the menu goes where the pointer turns up.
+            window.setColor(QColor(0, 0, 0, 0))
+            window.setGeometry(self._all_screens())
+            window.setVisible(True)
+            window.raise_()
+            self._place_timer.start(PLACE_WAIT[XWAYLAND])
+        elif self.kind == WINDOW:
+            self._was_active = False
+            window.showMaximized()
+            self._place_timer.start(PLACE_WAIT[WINDOW])
+        else:
+            window.setVisible(True)
+            self._place_timer.start(PLACE_WAIT[LAYER])
+
+    @staticmethod
+    def _all_screens():
+        area = QRect()
+        for screen in QGuiApplication.screens():
+            area = area.united(screen.geometry())
+        return area
+
+    def _screen_in_window(self, x, y):
+        """The part of the window that is the screen holding the point (x, y) of the window: the whole of it,
+        unless the window lies over several screens."""
+        whole = QRectF(0, 0, self._window.width(), self._window.height())
+        if self.kind != XWAYLAND:
+            return whole
+        origin = self._window.position()
+        for screen in QGuiApplication.screens():
+            area = QRectF(screen.geometry().translated(-origin))
+            if area.contains(QPointF(x, y)):
+                return area
+        return whole
+
+    def _focus_changed(self):
+        """WINDOW: the focus went elsewhere (a click on a panel, a switch to another window), and the menu
+        would be left lying over the desktop unseen. A desktop may pass the focus back and forth while a
+        window comes up, so it has to stay away for a moment to count."""
+        if self._window.isActive():
+            self._was_active = True
+            self._away_timer.stop()
+        elif self._open and self._was_active:
+            self._away_timer.start(FOCUS_AWAY)
+
     def close(self):
-        for timer in (self._place_timer, self._idle_timer, self._dwell_timer):
+        for timer in (self._place_timer, self._idle_timer, self._dwell_timer, self._away_timer):
             timer.stop()
         self._grow.stop()
         self._held = False
@@ -701,7 +830,7 @@ class RingOverlay(QObject):
         self.close()
         self.cue.emit(device.WAVE_CONFIRM)
         # Let the overlay unmap first so the action lands in the application below.
-        QTimer.singleShot(40, lambda: self.triggered.emit(action))
+        QTimer.singleShot(ACTION_DELAY[self.kind], lambda: self.triggered.emit(action))
 
     # -- driven by the pointer (QML) ---------------------------------------
 
@@ -710,10 +839,10 @@ class RingOverlay(QObject):
 
     def _place(self, x, y):
         self._place_timer.stop()
-        width, height = self._window.width(), self._window.height()
+        area = self._screen_in_window(x, y)
         size, margin = self._size, 6
-        self._ring.setX(max(margin, min(width - size - margin, x - size / 2)))
-        self._ring.setY(max(margin, min(height - size - margin, y - size / 2)))
+        self._ring.setX(max(area.left() + margin, min(area.right() - size - margin, x - size / 2)))
+        self._ring.setY(max(area.top() + margin, min(area.bottom() - size - margin, y - size / 2)))
         self._placed = True
         self._ring.setProperty("shown", True)
         self._grow.stop()
@@ -721,7 +850,11 @@ class RingOverlay(QObject):
 
     def _place_fallback(self):
         if self._open and not self._placed:
-            self._place(self._window.width() / 2, self._window.height() / 2)
+            if self.kind == XWAYLAND:  # the middle of the main screen, not of all screens taken together
+                middle = QGuiApplication.primaryScreen().geometry().center() - self._window.position()
+                self._place(middle.x(), middle.y())
+            else:
+                self._place(self._window.width() / 2, self._window.height() / 2)
 
     def _at(self, x, y):
         return cell_at(QPointF(x, y), self._ring_rect(), len(self._level()), self._style)
@@ -733,6 +866,8 @@ class RingOverlay(QObject):
         if not self._placed:
             self._place(x, y)
             return
+        if self._small:
+            self._away_timer.stop()
         self._idle_timer.start()
         index = self._at(x, y)
         # Near a screen edge the menu cannot be centred on the cursor, and a freshly opened
@@ -742,6 +877,15 @@ class RingOverlay(QObject):
                 return
             self._armed = True
         self._select(index)
+
+    @Slot()
+    def pointerLeft(self):
+        """The pointer went off the window: onto another screen, or past the small window of X11 without compositing."""
+        if self._open and self._placed:
+            self._armed = True
+            self._select(-1)
+            if self._small and not self._held:
+                self._away_timer.start()  # a click elsewhere, which would close the menu, is never heard of here
 
     @Slot(float, float)
     def clickAt(self, x, y):
@@ -790,3 +934,126 @@ class RingOverlay(QObject):
             self._ring.set_spin(index, self._angle)
             self.cue.emit(device.WAVE_TICK)
             self.triggered.emit(up if forward else down)
+
+
+class RingProxy(QObject):
+    """Stands for a RingOverlay that lives in a program of its own (ring_helper.py).
+
+    On a Wayland desktop without layers above the windows, a window that neither takes the focus nor is
+    animated can only be had from the X server the session keeps for X11 programs. This program talks to
+    the Wayland compositor and cannot talk to that server as well, so a second, small one does, started
+    from here and told over its standard input what the overlay would be told: one line of JSON each
+    way per call or signal."""
+
+    triggered = Signal(object)
+    cue = Signal(int)
+    opened = Signal(bool)
+
+    kind = XWAYLAND
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.available = False
+        self._look = None    # (theme, accent, language)
+        self._config = None  # the "ring" section of the settings
+        self._open = False
+        self._buffer = b""
+        self._starts = 0
+        self._closing = False
+        self._process = QProcess(self)
+        self._process.setProgram(sys.executable)
+        self._process.setArguments(["-m", "mxoptions.ui.ring_helper"])
+        env = QProcessEnvironment.systemEnvironment()
+        env.insert("QT_QPA_PLATFORM", HELPER_PLATFORM)
+        package_home = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        env.insert("PYTHONPATH", os.pathsep.join(filter(None, [package_home, env.value("PYTHONPATH")])))
+        self._process.setProcessEnvironment(env)
+        self._process.setProcessChannelMode(QProcess.ProcessChannelMode.ForwardedErrorChannel)  # what it logs goes where ours goes
+        self._process.readyReadStandardOutput.connect(self._read)
+        self._process.finished.connect(lambda *_result: self._ended())
+        self._process.errorOccurred.connect(lambda error: log.warning("ring: its own program: %s", error.name))
+        self._start()
+
+    def _start(self):
+        self._starts += 1
+        self._buffer = b""
+        self._process.start()
+
+    def _ended(self):
+        was_open, self._open, self.available = self._open, False, False
+        if was_open:
+            self.opened.emit(False)
+        if self._closing:
+            return
+        if self._starts > HELPER_RESTARTS:
+            log.warning("Actions Ring overlay unavailable: its own program keeps ending")
+            return
+        log.warning("ring: its own program ended; starting it again")
+        QTimer.singleShot(1000 * self._starts, self._start)
+
+    def _send(self, do, **more):
+        if self._process.state() == QProcess.ProcessState.Running:
+            self._process.write(json.dumps(dict(more, do=do)).encode("utf-8") + b"\n")
+
+    def _read(self):
+        self._buffer += bytes(self._process.readAllStandardOutput())
+        *lines, self._buffer = self._buffer.split(b"\n")
+        for line in lines:
+            try:
+                message = json.loads(line)
+                event = message["event"]
+            except (ValueError, KeyError, TypeError):
+                continue  # something a library printed
+            if event == "ready":
+                self.available = bool(message.get("available"))
+                log.info("ring: overlay of the %s kind, in a program of its own%s", self.kind, "" if self.available else " (unusable)")
+                if self._look is not None:
+                    self._send("look", look=self._look)
+                if self._config is not None:
+                    self._send("configure", ring=self._config)
+            elif event == "triggered" and isinstance(message.get("action"), dict):
+                self.triggered.emit(message["action"])
+            elif event == "cue" and isinstance(message.get("wave"), int):
+                self.cue.emit(message["wave"])
+            elif event == "opened":
+                self._open = bool(message.get("on"))
+                self.opened.emit(self._open)
+
+    def set_look(self, theme_name, accent, language):
+        self._look = [theme_name, accent, language]
+        self._send("look", look=self._look)
+
+    def configure(self, ring):
+        self._config = ring
+        self._send("configure", ring=ring)
+
+    def refresh(self):
+        pass  # the look is passed on by set_look, and the other program repaints for itself
+
+    def handle(self, event):
+        self._send("handle", event=event)
+
+    def turn(self, clicks):
+        self._send("turn", clicks=clicks)
+
+    def open(self, bubbles=None):
+        root = (self._config or {}).get("bubbles") if bubbles is None else bubbles
+        if not self.available or self._open or not root:
+            return False
+        self._send("open", bubbles=bubbles)
+        return True
+
+    def close(self):
+        self._send("close")
+
+    def shutdown(self):
+        """End the other program with this one."""
+        self._closing = True
+        self._process.closeWriteChannel()  # it leaves when nothing more can be said to it
+        if not self._process.waitForFinished(1500):
+            self._process.kill()
+
+
+def create_overlay(parent=None):
+    """The overlay for this desktop: here, or in a program of its own."""
+    return RingProxy(parent) if overlay_kind() == XWAYLAND else RingOverlay(parent)

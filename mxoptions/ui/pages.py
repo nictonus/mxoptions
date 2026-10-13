@@ -1,6 +1,8 @@
 """The pages of the main window."""
 
+import sys
 import threading
+import time
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
@@ -465,6 +467,13 @@ class HapticsPage(ScrollPage):
         self.rumble = Switch()
         self.rumble.toggled.connect(lambda on: self.store.set("rumble", "enabled", on))
         card.add(Row(_("Vibrate with games"), None, self.rumble))
+        # Windows adds a controller only through a driver made for it, which the user has to install
+        self.rumble_driver = QLabel()
+        self.rumble_driver.setObjectName("banner")
+        self.rumble_driver.setWordWrap(True)
+        self.rumble_driver.setOpenExternalLinks(True)
+        self.rumble_driver.hide()
+        card.add_plain(self.rumble_driver)
         self.rumble_rows = {}
         for key, title in (("light", _("Weak rumble")), ("medium", _("Medium rumble")), ("strong", _("Strong rumble"))):
             row = PatternRow(title)
@@ -494,6 +503,7 @@ class HapticsPage(ScrollPage):
             rumble_nudge))
         self.rumble_card = card
         self.body.addWidget(card)
+        self._rumble_checked = 0.0
 
         self.missing = hint_label(_("This mouse has no haptic motor."))
         self.missing.hide()
@@ -527,6 +537,17 @@ class HapticsPage(ScrollPage):
             self.force.set_value(round((haptics["force"] - low) * 100.0 / max(1, high - low)))
         rumble = self.store.cfg["rumble"]
         self.rumble.set_checked_silently(rumble["enabled"])
+        if sys.platform == "win32" and time.monotonic() - self._rumble_checked > 5.0:
+            from .. import rumble_windows
+
+            self._rumble_checked = time.monotonic()
+            found = rumble_windows.state()
+            self.rumble_driver.setVisible(found != rumble_windows.READY)
+            self.rumble_driver.setText(
+                _("Windows lets a program add a game controller only through a driver made for that. Install ViGEmBus "
+                  "once ({}), then switch this on.").format(f'<a href="{rumble_windows.DRIVER_PAGE}">{rumble_windows.DRIVER_PAGE[8:]}</a>')
+                if found == rumble_windows.NO_DRIVER else
+                _("The part of this program that talks to the controller driver (ViGEmClient.dll) is missing here."))
         for key, row in self.rumble_rows.items():
             row.set_value(rumble[key])
         self.rumble_interval.set_value(rumble["interval"])
@@ -682,14 +703,18 @@ class DevicePage(ScrollPage):
         card.add(Row(
             _("Let other programs use the mouse"),
             _("Scripts and apps can play vibrations, run actions, show their own ring, read and change settings "
-              "and follow buttons, gestures and the wheel over D-Bus. See API.md in the documentation."),
+              "and follow buttons, gestures and the wheel over D-Bus. See API.md in the documentation.")
+            if sys.platform != "win32" else
+            _("Scripts and apps can play vibrations, run actions, show their own ring and read and change settings "
+              "with “mxoptions --call”. See API.md in the documentation."),
             self.api,
         ))
         example = QWidget()
         example_layout = QHBoxLayout(example)
         example_layout.setContentsMargins(0, 0, 0, 0)
         example_layout.setSpacing(10)
-        self.api_example = ElidedLabel(f"qdbus6 {api.SERVICE} {api.PATH} PlayHaptic knock", Qt.TextElideMode.ElideMiddle)
+        self.api_example = ElidedLabel(f"qdbus6 {api.SERVICE} {api.PATH} PlayHaptic knock" if sys.platform != "win32"
+                                       else "mxoptions --call PlayHaptic knock", Qt.TextElideMode.ElideMiddle)
         self.api_example.setObjectName("summary")
         self.api_example.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         example_layout.addWidget(self.api_example, 1)

@@ -94,5 +94,5 @@ class Clock:
 
 
 def names(actions):
-    """What the recorded actions were, by KDE shortcut name or key list."""
-    return [action.get("name") or action.get("keys") for action in actions]
+    """What the recorded actions were: what was asked of the desktop, a KDE shortcut's name, or a key list."""
+    return [action.get("do") or action.get("name") or action.get("keys") for action in actions]

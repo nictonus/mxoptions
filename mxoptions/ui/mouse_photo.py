@@ -13,6 +13,7 @@ import urllib.request
 from PySide6.QtCore import QObject, QPointF, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QPainterPath, QPainterPathStroker, QPen, QRadialGradient
 
+from .. import paths
 from . import theme
 
 try:
@@ -22,7 +23,7 @@ except ImportError:  # only the soft shadow needs it
 
 log = logging.getLogger(__name__)
 
-PHOTO_DIR = os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share"), "mxoptions", "mouse")
+PHOTO_DIR = os.path.join(paths.DATA, "mouse")
 COLORS = ("graphite", "pale-grey", "black")
 # Where a picture comes from, and the part of it that holds the mouse (fractions of the image:
 # left, top, width, height). The outlines below belong to exactly this crop.

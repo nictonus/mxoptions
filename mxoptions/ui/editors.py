@@ -133,7 +133,7 @@ class StepRow(QFrame):
             self.editor.selected.connect(self._set_button)
         else:
             self.editor = QLineEdit(step.get("command", ""))
-            self.editor.setPlaceholderText(_("e.g. konsole or a script path"))
+            self.editor.setPlaceholderText(_("e.g. firefox or a script path"))
         layout.addWidget(self.editor, 1)
         if self.kind in ("delay", "click"):
             layout.addStretch(1)

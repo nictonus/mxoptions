@@ -6,6 +6,7 @@ import os
 import queue
 import shutil
 import socket
+import sys
 import tempfile
 import time
 import unittest
@@ -237,6 +238,7 @@ class Linked(TwoComputers):
         self.desk.link.send({"t": "after"})
         self.assertEqual(self.laptop.expect("message")["t"], "after")
 
+    @unittest.skipIf(sys.platform == "win32", "Windows does not carry a broadcast between two programs on one machine, which is how they find each other here")
     def test_with_no_address_given_they_find_each_other(self):
         self.desk.link.configure(KEY, self.desk.port, "")
         self.laptop.link.configure(KEY, self.laptop.port, "")
@@ -286,8 +288,14 @@ class ThreeComputers(TwoComputers):
 
     def test_each_is_told_what_is_meant_for_it(self):
         self.desk.link.set_status({"name": "desk", "channel": 0}, {self.with_laptop: {"edge": "left"}, self.with_tower: {"edge": "right"}})
-        self.assertEqual(self.laptop.expect("status")["edge"], "left")
-        self.assertEqual(self.tower.expect("status")["edge"], "right")
+        def edge_told(computer):  # what it said when the link came up, with no edge in it yet, may still be on its way
+            while True:
+                status = computer.expect("status")
+                if "edge" in status:
+                    return status["edge"]
+
+        self.assertEqual(edge_told(self.laptop), "left")
+        self.assertEqual(edge_told(self.tower), "right")
 
     def test_files_go_to_one_of_the_two(self):
         source = os.path.join(self.folder, "note.txt")
@@ -305,6 +313,19 @@ class ThreeComputers(TwoComputers):
         self.laptop.link.send({"t": "note"})
         self.assertEqual(self.desk.expect("message")["t"], "note")
         self.assertTrue(self.tower.quiet("message", 0.4))
+
+
+class NamesFromElsewhere(unittest.TestCase):
+    def test_linux_takes_them_as_they_are(self):
+        self.assertEqual(flow_files.local_name('draft: "final"?.txt', windows=False), 'draft: "final"?.txt')
+
+    def test_windows_gets_names_it_can_write(self):
+        self.assertEqual(flow_files.local_name('draft: "final"?.txt', windows=True), "draft_ _final__.txt")
+        self.assertEqual(flow_files.local_name("звіт.txt", windows=True), "звіт.txt")
+        self.assertEqual(flow_files.local_name("notes. ", windows=True), "notes")
+        self.assertEqual(flow_files.local_name("NUL", windows=True), "_NUL")
+        self.assertEqual(flow_files.local_name("com1.txt", windows=True), "_com1.txt")
+        self.assertEqual(flow_files.local_name("...", windows=True), "_")
 
 
 class Beacons(unittest.TestCase):
@@ -333,6 +354,7 @@ class Beacons(unittest.TestCase):
 class Pairing(TwoComputers):
     INFO = {"name": "laptop", "port": 5001}
 
+    @unittest.skipIf(sys.platform == "win32", "Windows does not carry a broadcast between two programs on one machine, which is how they find each other here")
     def test_the_code_pairs_them_and_both_get_the_same_key(self):
         self.laptop.link.watch_offers(True)
         self.desk.link.open_pairing("482913", {"name": "desk", "port": 5000})
@@ -416,8 +438,21 @@ class Files(TwoComputers):
         base = os.path.join(self.folder, "at-laptop")
         return os.listdir(base) if os.path.isdir(base) else []
 
+    def slow(self, end, seconds=0.002):
+        """Make ``end`` take its time over every piece that arrives. Between two programs on one machine even a
+        large file is across before a test has looked twice, and then there is nothing left to give up."""
+        receiver = end.link._receiver
+        take = receiver.chunk
+
+        def chunk(*args):
+            time.sleep(seconds)
+            return take(*args)
+
+        receiver.chunk = chunk
+
     def test_a_transfer_tells_how_far_it_is_and_can_be_given_up_by_the_sender(self):
         self.connect()
+        self.slow(self.laptop)
         self.laptop.link.accept_files(4 * 1024 ** 3)
         self.desk.link.offer_files(*flow_files.collect([self.big()], 4 * 1024 ** 3))
         self.assertEqual(self.laptop.expect("files-coming")["count"], 1)
@@ -433,6 +468,7 @@ class Files(TwoComputers):
 
     def test_the_receiver_can_give_it_up_too(self):
         self.connect()
+        self.slow(self.laptop)
         self.laptop.link.accept_files(4 * 1024 ** 3)
         self.desk.link.offer_files(*flow_files.collect([self.big()], 4 * 1024 ** 3))
         self.laptop.expect("files-progress")

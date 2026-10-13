@@ -2,7 +2,8 @@
 
 An installed copy (see the Makefile) brings its own menu entry and a systemd user service; then
 "start at login" switches that service on and off. Run from a source tree, the program writes the
-menu entry and an XDG autostart entry itself."""
+menu entry and an XDG autostart entry itself. On Windows starting with the session is an entry
+among the user's start-up programs (windows.py), and the menu entry is the installer's business."""
 
 import os
 import shlex
@@ -10,6 +11,10 @@ import subprocess
 import sys
 
 from . import APP_ID, APP_NAME
+
+WINDOWS = sys.platform == "win32"
+if WINDOWS:
+    from . import windows
 
 ICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon.svg")
 SERVICE = f"{APP_ID}.service"
@@ -70,7 +75,7 @@ def _systemctl(*args):
 
 def service_installed():
     """Whether the systemd user service of an installed copy is there to be used."""
-    return _systemctl("cat", SERVICE)[0] == 0
+    return not WINDOWS and _systemctl("cat", SERVICE)[0] == 0
 
 
 def start_service():
@@ -79,6 +84,8 @@ def start_service():
 
 
 def autostart_enabled():
+    if WINDOWS:
+        return windows.autostart_enabled()
     if service_installed():
         return _systemctl("is-enabled", SERVICE)[1] == "enabled"
     return os.path.exists(AUTOSTART_PATH)
@@ -86,7 +93,9 @@ def autostart_enabled():
 
 def set_autostart(enabled):
     """Start with the session from now on, or no longer. The running program is left as it is."""
-    if service_installed():
+    if WINDOWS:
+        windows.set_autostart(enabled)
+    elif service_installed():
         status, output = _systemctl("enable" if enabled else "disable", SERVICE)
         if status != 0:
             raise OSError(output or f"systemctl could not {'enable' if enabled else 'disable'} {SERVICE}")
@@ -97,7 +106,7 @@ def set_autostart(enabled):
 
 def launcher_managed():
     """True when the menu entry belongs to a system-wide installation and is not ours to remove."""
-    return any(os.path.exists(path) for path in _SYSTEM_LAUNCHERS)
+    return WINDOWS or any(os.path.exists(path) for path in _SYSTEM_LAUNCHERS)
 
 
 def launcher_enabled():
@@ -105,4 +114,5 @@ def launcher_enabled():
 
 
 def set_launcher(enabled):
-    _set(LAUNCHER_PATH, enabled, background=False)
+    if not WINDOWS:
+        _set(LAUNCHER_PATH, enabled, background=False)

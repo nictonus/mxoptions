@@ -16,7 +16,8 @@ import os
 import sys
 import time
 
-os.environ["QT_QPA_PLATFORM"] = "offscreen"
+if sys.platform != "win32":  # on Windows only the desktop's own platform has fonts; nothing is shown there either
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
@@ -130,6 +131,13 @@ def main():
             if folder is not None:
                 page._open(folder)
                 save("ring-folder")
+                page._path.clear()  # back out of the folder
+                page._refresh()
+            action = next((i for i, bubble in enumerate(store.cfg["ring"]["bubbles"]) if "action" in bubble), None)
+            if action is not None:  # a bubble being made a dial: the list of what the wheel can turn
+                page._select(action)
+                page._kind_changed("scroll")
+                save("ring-dial")
         elif name == "device":
             scroll(page, 1.0)
             save("device-integrations")

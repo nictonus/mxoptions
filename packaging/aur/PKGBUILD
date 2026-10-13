@@ -12,7 +12,9 @@ arch=('any')
 url="https://github.com/nictonus/mxoptions"
 license=('MIT')
 depends=('python' 'pyside6' 'python-evdev' 'qt6-declarative' 'qt6-multimedia' 'layer-shell-qt')
-optdepends=('python-numpy: glossy 3D mouse model and soft shadows')
+optdepends=('python-numpy: glossy 3D mouse model and soft shadows'
+            'kguiaddons: Flow carries copied pictures and files (KDE Plasma, sway, Hyprland)'
+            'wl-clipboard: the same where kguiaddons cannot reach the clipboard (GNOME)')
 install=mxoptions.install
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
 sha256sums=('20e4c6c2cd739366cbbd422587beff329d8a6a6f756845202358f835f5cb089b')

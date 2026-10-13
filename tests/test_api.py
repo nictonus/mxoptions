@@ -3,7 +3,7 @@ import unittest
 import wave
 
 import tests.support  # noqa: F401
-from mxoptions import actions, api, device
+from mxoptions import actions, api, device, environment
 from mxoptions.ui import sounds
 
 
@@ -35,6 +35,13 @@ class Actions(unittest.TestCase):
         for text in ("gestures", "ring", "default", "dpi_shift", "no-such-action", "{broken", '["list"]', '{"type": "warp"}'):
             with self.subTest(text=text):
                 self.assertIsNone(api.parse_action(text))
+
+    def test_what_the_desktop_does_in_its_own_way_goes_by_name(self):
+        self.assertEqual(api.parse_action("overview"), {"type": "desktop", "do": "overview"})
+        self.assertEqual(api.parse_action('{"type": "desktop", "do": "win_close"}'), {"type": "desktop", "do": "win_close"})
+        self.assertTrue(environment.available(api.parse_action("overview"), environment.KDE))
+        self.assertFalse(environment.available(api.parse_action("overview"), environment.SWAY))
+        self.assertFalse(environment.available(api.parse_action('{"type": "desktop", "do": "no_such_thing"}'), environment.KDE))
 
     def test_catalogue_ids_are_unique(self):
         ids = [preset.id for preset in actions.PRESETS]

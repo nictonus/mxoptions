@@ -3,9 +3,9 @@ sides, hand the mouse over at the edge and carry what was copied. The mouse, the
 clipboard are stand-ins; the network between the two is real, on the loopback interface."""
 
 import copy
-import json
 import os
 import shutil
+import sys
 import tempfile
 import time
 import unittest
@@ -16,7 +16,7 @@ from PySide6.QtGui import QGuiApplication  # noqa: E402
 
 import tests.support  # noqa: E402,F401
 from tests.test_flow import free_port  # noqa: E402
-from mxoptions import clipboard, config, flow, flow_files, flow_service, vinput  # noqa: E402
+from mxoptions import clipboard, config, flow, flow_edges, flow_files, flow_service, vinput  # noqa: E402
 from mxoptions.ui.store import Store  # noqa: E402
 
 APP = QGuiApplication.instance() or QGuiApplication([])
@@ -47,6 +47,9 @@ class Clipboard:
         self.written = []
 
     def rich(self):
+        return True
+
+    def available(self):
         return True
 
     def read(self, image_limit=None):
@@ -108,7 +111,7 @@ class Computer:
     def at_edge(self, edge, along, full=False):
         """What the edge watcher says when the pointer comes to rest ``along`` (0..1) the edge of a 1000x1000 screen."""
         x, y = {"right": (999, along * 999), "left": (0, along * 999), "top": (along * 999, 0), "bottom": (along * 999, 999)}[edge]
-        self.flow._edge_report(json.dumps({"at": True, "edge": edge, "x": x, "y": y, "screen": [0, 0, 1000, 1000], "full": full}))
+        self.flow._edge_report({"at": True, "edge": edge, "x": x, "y": y, "screen": [0, 0, 1000, 1000], "full": full})
 
 
 def wait(condition, timeout=8.0):
@@ -133,6 +136,7 @@ def pair_them(test, host, guest, peers_of_host=1):
 
 
 @unittest.skipUnless(flow.supported(), "this Python has no pre-shared keys for TLS")
+@unittest.skipIf(sys.platform == "win32", "Windows does not carry a broadcast between two programs on one machine, which is how they find each other here")
 class Services(unittest.TestCase):
     def setUp(self):
         self.folder = tempfile.mkdtemp(prefix="mxoptions-test-")
@@ -141,8 +145,7 @@ class Services(unittest.TestCase):
                    (flow, "DISCOVERY_PORT", free_port()), (flow, "PAIR_PORT", free_port()),
                    (flow, "broadcast_addresses", lambda: ["127.255.255.255"]),
                    (flow_files, "STAGING", os.path.join(self.folder, "arrived")),
-                   (flow_service, "_kwin", lambda *args: None), (flow_service, "kwin_running", lambda: False),
-                   (flow_service.FlowService, "_export", lambda self, wanted: False),  # stay off the session bus
+                   (flow_edges, "create", lambda *args, **more: None),  # stay off the session bus and the desktop
                    (vinput, "create_pointer", Pointer)]
         for module, name, value in changes:
             self.addCleanup(setattr, module, name, getattr(module, name))

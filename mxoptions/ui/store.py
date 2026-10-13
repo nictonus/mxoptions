@@ -31,7 +31,7 @@ class Store(QObject):
         self.engine = engine
         self.sounds = sounds  # WheelSounds, for the pages that let the user hear a click
         self.flow = None      # flow_service.FlowService, once the program has made it
-        self.state = {"connected": False, "known": False, "name": "", "uinput": True, "battery": None,
+        self.state = {"connected": False, "known": False, "name": "", "uinput": True, "rivals": [], "battery": None,
                       "current_host": 0, "hosts": [], "dpi": cfg["pointer"]["dpi"], "wheel_mode": "", "caps": None}
         self._save_timer = QTimer(self, singleShot=True, interval=500)
         self._save_timer.timeout.connect(self.flush)

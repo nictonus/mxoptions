@@ -41,13 +41,13 @@ class Recognition(unittest.TestCase):
     def test_tap(self):
         engine, _ = make_engine()
         self.assertEqual(swipe(engine, [(3, 2)])[0], "tap")
-        self.assertEqual(names(engine.executor.ran), ["Overview"])
+        self.assertEqual(names(engine.executor.ran), ["overview"])
 
     def test_short_swipe_is_judged_on_release(self):
         engine, _ = make_engine()
         result, while_held = swipe(engine, [(-40, 6)] * 5)
         self.assertEqual((result, while_held), ("left", []))
-        self.assertEqual(names(engine.executor.ran), ["Switch One Desktop to the Left"])
+        self.assertEqual(names(engine.executor.ran), ["desktop_left"])
 
     def test_upward_drift_does_not_turn_left_into_up(self):
         engine, _ = make_engine()
@@ -84,7 +84,7 @@ class Recognition(unittest.TestCase):
         engine, _ = make_engine(gestures={"trigger": "repeat"})
         result, _held = swipe(engine, [(2, -60)] * 30)  # 46 mm up: once at 16 mm, then every 8 mm
         self.assertEqual(result, "repeat")
-        self.assertEqual(names(engine.executor.ran), ["ExposeAll"] * 4)
+        self.assertEqual(names(engine.executor.ran), ["all_windows"] * 4)
 
     def test_practice_mode_recognises_but_does_not_act(self):
         engine, _ = make_engine()

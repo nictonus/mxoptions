@@ -10,17 +10,24 @@ import logging
 import math
 import queue
 import struct
+import sys
 import threading
 import time
 
-from . import config, device, gestures, hidpp, rumble, vinput
-from .actions import Executor, keys
+from . import config, device, environment, gestures, hidpp, vinput
+from .actions import Executor, here, keys
+
+if sys.platform == "win32":
+    from . import rumble_windows as rumble  # the same thing, through the driver Windows needs for it
+else:
+    from . import rumble
 from .hidpp import HidppClosed, HidppError, HidppFeatureError
 
 log = logging.getLogger(__name__)
 
 SECTIONS = ("buttons", "pointer", "wheel", "thumbwheel", "haptics")
 SCAN_INTERVAL = 3.0
+RIVALS_INTERVAL = 30.0  # s between two looks for other mouse software
 OFFLINE_PING_INTERVAL = 5.0
 BATTERY_INTERVAL = 300.0
 # Gestures (the thresholds themselves are settings, see config.DEFAULTS["gestures"]). The direction
@@ -55,8 +62,7 @@ HID_BUTTONS = ("left", "right", "middle", "back", "forward")  # bit order of the
 THUMB_STEPS = {
     "volume": (1, keys("VOLUMEUP"), keys("VOLUMEDOWN")),
     "tabs": (3, keys("LEFTCTRL", "TAB"), keys("LEFTCTRL", "LEFTSHIFT", "TAB")),
-    "desktops": (5, {"type": "shortcut", "component": "kwin", "name": "Switch One Desktop to the Right"},
-                 {"type": "shortcut", "component": "kwin", "name": "Switch One Desktop to the Left"}),
+    "desktops": (5, environment.wanted("desktop_right"), environment.wanted("desktop_left")),
     "brightness": (1, keys("BRIGHTNESSUP"), keys("BRIGHTNESSDOWN")),
     "zoom": (1, None, None),
 }
@@ -132,6 +138,8 @@ class Engine:
         self._thumb = {"acc": 0.0, "last": 0.0, "fraction": 0.0}
         self._monitor = False      # the settings window is open and wants to see button presses
         self._watcher = None       # follows the mouse's ordinary reports (hidpp.MouseReports)
+        self._rivals = []          # other mouse software found running, and when to look again
+        self._next_rivals = 0.0
         self._hid_buttons = 0
         self._reported = frozenset()
         self._expect_until = 0.0   # the other computer is sending the mouse over: look for it more often
@@ -323,8 +331,19 @@ class Engine:
                 self._hid_buttons = item[2]
                 self._publish_pressed()
 
+    def _look_for_rivals(self, now):
+        self._next_rivals = now + RIVALS_INTERVAL
+        found = environment.rivals()
+        if found != self._rivals:
+            self._rivals = found
+            if found:
+                log.warning("%s is running too: it and this program will undo each other's settings of the mouse", " and ".join(found))
+            self._publish()
+
     def _tick(self):
         now = time.monotonic()
+        if now >= self._next_rivals:
+            self._look_for_rivals(now)
         expected = now < self._expect_until
         if self.mouse is None:
             if now >= self._next_scan:
@@ -453,18 +472,12 @@ class Engine:
         wanted = ((self._monitor or self._spin_wanted() or self.cfg["flow"]["enabled"]) and self.mouse is not None
                   and self.online)
         if wanted and self._watcher is None:
-            transport = self.mouse.transport
             heard = (lambda watcher, bits: self._queue.put(("hid_buttons", watcher, bits)),
                      lambda watcher, notches, when: self._queue.put(("hid_wheel", watcher, notches, when)))
-            if transport.is_receiver:  # the receiver sends them on a node of their own
-                path = hidpp.find_mouse_report_node(transport.path)
-                if path:
-                    try:
-                        self._watcher = hidpp.ButtonWatcher(path, *heard)
-                    except OSError as e:
-                        log.debug("cannot watch %s: %s", path, e)
-            else:  # Bluetooth or a cable: they arrive where the HID++ traffic does
-                self._watcher = hidpp.DirectWatcher(transport, *heard)
+            try:
+                self._watcher = hidpp.watch_mouse(self.mouse.transport, *heard)
+            except OSError as e:
+                log.debug("cannot follow the mouse's own reports: %s", e)
         elif not wanted and self._watcher is not None:
             watcher, self._watcher = self._watcher, None
             watcher.close()
@@ -553,7 +566,8 @@ class Engine:
             if cid not in mouse.controls:
                 continue
             kind = self.cfg["buttons"][key].get("type")
-            needs_input = kind in ("keys", "button") and self.vinput is None
+            does = here(self.cfg["buttons"][key]).get("type")  # what an action of the desktop's comes to on this one
+            needs_input = does in ("keys", "button") and self.vinput is None
             divert = kind != "default" and not needs_input
             mouse.set_cid_reporting(cid, divert, raw_xy=kind == "gestures")  # raw XY freezes the cursor: gestures only
             if divert and kind == "gestures":
@@ -650,6 +664,7 @@ class Engine:
             "known": mouse is not None,
             "name": mouse.name if mouse else "",
             "uinput": self.vinput is not None,
+            "rivals": list(self._rivals),  # other mouse software that is running (environment.rivals)
             "battery": self._battery if mouse else None,
             "current_host": self._hosts[0],
             "hosts": copy.deepcopy(self._hosts[1]) if mouse else [],

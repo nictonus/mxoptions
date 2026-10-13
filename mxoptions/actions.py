@@ -6,6 +6,7 @@ An action is a plain JSON-able dict:
     {"type": "keys", "keys": ["KEY_..."]}    keyboard shortcut (held while the button is held)
     {"type": "button", "button": "BTN_..."}  mouse button
     {"type": "shortcut", "component": c, "name": n}   KDE global shortcut via kglobalaccel
+    {"type": "desktop", "do": "overview"}    what the desktop does in its own way (environment.py): only named here
     {"type": "command", "command": "..."}    shell command
     {"type": "script", "name": n, "script": "..."}    multi-line script (bash unless it has a #! line)
     {"type": "macro", "name": n, "repeat": bool, "steps": [...]}   sequence of steps, see MACRO_STEPS
@@ -24,10 +25,11 @@ import logging
 import os
 import queue
 import subprocess
-import tempfile
+import sys
 import threading
 import time
 
+from . import environment, paths
 from .i18n import _
 
 log = logging.getLogger(__name__)
@@ -45,6 +47,11 @@ def shortcut(component, name):
 
 def button(name):
     return {"type": "button", "button": name}
+
+
+def desktop(name):
+    """Something every desktop does in its own way: see environment.WAYS."""
+    return environment.wanted(name)
 
 
 DEFAULT = {"type": "default"}
@@ -75,25 +82,25 @@ _PRESETS = [
     ("dpi_shift", "mouse", "Precision mode (hold)", "crosshairs", {"type": "dpi_shift"}),
     ("none", "mouse", "Do nothing", "dialog-cancel", NONE),
 
-    ("overview", "desktop", "Overview", "view-app-grid", shortcut("kwin", "Overview")),
-    ("all_windows", "desktop", "All windows", "view-list-icons", shortcut("kwin", "ExposeAll")),
-    ("desktop_grid", "desktop", "Desktop grid", "view-grid", shortcut("kwin", "Grid View")),
-    ("show_desktop", "desktop", "Show desktop", "user-desktop", shortcut("kwin", "Show Desktop")),
-    ("desktop_left", "desktop", "Desktop to the left", "go-previous", shortcut("kwin", "Switch One Desktop to the Left")),
-    ("desktop_right", "desktop", "Desktop to the right", "go-next", shortcut("kwin", "Switch One Desktop to the Right")),
-    ("desktop_up", "desktop", "Desktop above", "go-up", shortcut("kwin", "Switch One Desktop Up")),
-    ("desktop_down", "desktop", "Desktop below", "go-down", shortcut("kwin", "Switch One Desktop Down")),
+    ("overview", "desktop", "Overview", "view-app-grid", desktop("overview")),
+    ("all_windows", "desktop", "All windows", "view-list-icons", desktop("all_windows")),
+    ("desktop_grid", "desktop", "Desktop grid", "view-grid", desktop("desktop_grid")),
+    ("show_desktop", "desktop", "Show desktop", "user-desktop", desktop("show_desktop")),
+    ("desktop_left", "desktop", "Desktop to the left", "go-previous", desktop("desktop_left")),
+    ("desktop_right", "desktop", "Desktop to the right", "go-next", desktop("desktop_right")),
+    ("desktop_up", "desktop", "Desktop above", "go-up", desktop("desktop_up")),
+    ("desktop_down", "desktop", "Desktop below", "go-down", desktop("desktop_down")),
     ("switch_window", "desktop", "Switch window", "preferences-system-windows", keys("LEFTALT", "TAB")),
-    ("launcher", "desktop", "Application launcher", "start-here-kde", shortcut("plasmashell", "activate application launcher")),
-    ("krunner", "desktop", "Search (KRunner)", "system-search", shortcut("org_kde_krunner_desktop", "_launch")),
+    ("launcher", "desktop", "Application launcher", "start-here", desktop("launcher")),
+    ("krunner", "desktop", "Search or run", "system-search", desktop("krunner")),
 
-    ("win_close", "window", "Close window", "window-close", shortcut("kwin", "Window Close")),
-    ("win_maximize", "window", "Maximize window", "window-maximize", shortcut("kwin", "Window Maximize")),
-    ("win_minimize", "window", "Minimize window", "window-minimize", shortcut("kwin", "Window Minimize")),
-    ("win_fullscreen", "window", "Fullscreen", "view-fullscreen", shortcut("kwin", "Window Fullscreen")),
-    ("win_tile_left", "window", "Tile window left", "go-first", shortcut("kwin", "Window Quick Tile Left")),
-    ("win_tile_right", "window", "Tile window right", "go-last", shortcut("kwin", "Window Quick Tile Right")),
-    ("win_above", "window", "Keep window on top", "window-keep-above", shortcut("kwin", "Window Above Other Windows")),
+    ("win_close", "window", "Close window", "window-close", desktop("win_close")),
+    ("win_maximize", "window", "Maximize window", "window-maximize", desktop("win_maximize")),
+    ("win_minimize", "window", "Minimize window", "window-minimize", desktop("win_minimize")),
+    ("win_fullscreen", "window", "Fullscreen", "view-fullscreen", desktop("win_fullscreen")),
+    ("win_tile_left", "window", "Tile window left", "go-first", desktop("win_tile_left")),
+    ("win_tile_right", "window", "Tile window right", "go-last", desktop("win_tile_right")),
+    ("win_above", "window", "Keep window on top", "window-keep-above", desktop("win_above")),
 
     ("copy", "edit", "Copy", "edit-copy", keys("LEFTCTRL", "C")),
     ("paste", "edit", "Paste", "edit-paste", keys("LEFTCTRL", "V")),
@@ -127,17 +134,17 @@ _PRESETS = [
     ("brightness_up", "media", "Brightness up", "brightness-high", keys("BRIGHTNESSUP")),
     ("brightness_down", "media", "Brightness down", "brightness-low", keys("BRIGHTNESSDOWN")),
 
-    ("screenshot_region", "system", "Screenshot (region)", "select-rectangular", shortcut("org_kde_spectacle_desktop", "RectangularRegionScreenShot")),
-    ("screenshot_full", "system", "Screenshot (full screen)", "camera-photo", shortcut("org_kde_spectacle_desktop", "FullScreenScreenShot")),
-    ("screenshot_window", "system", "Screenshot (window)", "window", shortcut("org_kde_spectacle_desktop", "ActiveWindowScreenShot")),
-    ("lock", "system", "Lock screen", "system-lock-screen", shortcut("ksmserver", "Lock Session")),
-    ("clipboard", "system", "Clipboard history", "klipper", shortcut("plasmashell", "show-on-mouse-pos")),
-    ("emoji", "system", "Emoji picker", "face-smile", shortcut("org_kde_plasma_emojier_desktop", "_launch")),
-    ("files", "system", "File manager", "system-file-manager", shortcut("org_kde_dolphin_desktop", "_launch")),
-    ("terminal", "system", "Terminal", "utilities-terminal", shortcut("org_kde_konsole_desktop", "_launch")),
+    ("screenshot_region", "system", "Screenshot (region)", "select-rectangular", desktop("screenshot_region")),
+    ("screenshot_full", "system", "Screenshot (full screen)", "camera-photo", desktop("screenshot_full")),
+    ("screenshot_window", "system", "Screenshot (window)", "window", desktop("screenshot_window")),
+    ("lock", "system", "Lock screen", "system-lock-screen", desktop("lock")),
+    ("clipboard", "system", "Clipboard history", "klipper", desktop("clipboard")),
+    ("emoji", "system", "Emoji picker", "face-smile", desktop("emoji")),
+    ("files", "system", "File manager", "system-file-manager", desktop("files")),
+    ("terminal", "system", "Terminal", "utilities-terminal", desktop("terminal")),
     ("calculator", "system", "Calculator", "accessories-calculator", keys("CALC")),
-    ("dnd", "system", "Do not disturb", "notifications-disabled", shortcut("plasmashell", "toggle do not disturb")),
-    ("night_light", "system", "Night light", "redshift-status-on", shortcut("kwin", "Toggle Night Color")),
+    ("dnd", "system", "Do not disturb", "notifications-disabled", desktop("dnd")),
+    ("night_light", "system", "Night light", "redshift-status-on", desktop("night_light")),
 
     ("host_1", "easyswitch", "Easy-Switch 1", "computer", {"type": "host", "host": 0}),
     ("host_2", "easyswitch", "Easy-Switch 2", "computer", {"type": "host", "host": 1}),
@@ -168,11 +175,10 @@ SCROLLS = {
     "seek": ("Seek", "media-seek-forward", keys("RIGHT"), keys("LEFT"), keys("SPACE")),
     "undo": ("Undo / redo", "edit-undo", keys("LEFTCTRL", "LEFTSHIFT", "Z"), keys("LEFTCTRL", "Z"), None),
     "history": ("Back / forward", "go-previous", keys("LEFTALT", "RIGHT"), keys("LEFTALT", "LEFT"), None),
-    "desktops": ("Switch desktops", "user-desktop", shortcut("kwin", "Switch to Previous Desktop"),
-                 shortcut("kwin", "Switch to Next Desktop"), shortcut("kwin", "Overview")),
+    "desktops": ("Switch desktops", "user-desktop", desktop("desktop_previous"), desktop("desktop_next"), desktop("overview")),
     "win_desktop": ("Window to another desktop", "preferences-system-windows-move",
-                    shortcut("kwin", "Window to Previous Desktop"), shortcut("kwin", "Window to Next Desktop"), None),
-    # for the Krohnkite tiling script (they do nothing where it is not installed)
+                    desktop("window_desktop_previous"), desktop("window_desktop_next"), None),
+    # for the Krohnkite tiling script of KDE Plasma (they do nothing where it is not installed)
     "tile_layout": ("Tiling: layout", "view-grid", shortcut("kwin", "KrohnkitePreviousLayout"),
                     shortcut("kwin", "KrohnkiteNextLayout"), shortcut("kwin", "KrohnkiteMonocleLayout")),
     "tile_width": ("Tiling: width", "transform-scale", shortcut("kwin", "KrohnkitegrowWidth"),
@@ -190,9 +196,22 @@ class Preset:
         self.icon = icon
         self.action = action
 
+    @property
+    def available(self):
+        """Whether this desktop has a way of doing it."""
+        return environment.available(self.action)
+
 
 PRESETS = [Preset(*p) for p in _PRESETS]
 PRESET_BY_ID = {p.id: p for p in PRESETS}
+
+
+def dial_available(name):
+    """Whether a ring dial can do anything on this desktop: turning it one way at least has to."""
+    _label, _icon, up, down, _click = SCROLLS[name]
+    return environment.available(up) and environment.available(down)
+
+
 # Presets that only make sense on a physical button, not inside a gesture or ring slot.
 BUTTON_ONLY = {"default", "gestures", "ring", "dpi_shift"}
 
@@ -245,6 +264,8 @@ def describe(action):
         return action.get("name", "").strip() or _("Macro")
     if kind == "shortcut":
         return action.get("name", "")
+    if kind == "desktop":
+        return str(action.get("do", "")).replace("_", " ").capitalize()
     if kind == "button":
         return action.get("button", "")
     if kind == "hook":
@@ -291,11 +312,13 @@ def invoke_kde_shortcut(component, name):
 
 
 def _spawn(argv, **kwargs):
+    """Start a program that goes its own way: it neither ends with this one nor shares its console."""
+    if sys.platform == "win32":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+    else:
+        kwargs["start_new_session"] = True
     try:
-        subprocess.Popen(
-            argv, start_new_session=True,
-            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kwargs,
-        )
+        subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kwargs)
     except OSError:
         log.exception("could not run %r", argv)
 
@@ -306,14 +329,18 @@ def run_command(command):
 
 
 def run_script(script):
-    """Run a multi-line script: with its own interpreter if it starts with #!, otherwise with bash."""
+    """Run a multi-line script: with its own interpreter if it starts with #!, otherwise with bash. On Windows
+    a script is PowerShell's."""
     text = script.strip()
     if not text:
+        return
+    if sys.platform == "win32":
+        _spawn(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", text])
         return
     if not text.startswith("#!"):
         _spawn(["bash", "-c", text])
         return
-    folder = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir(), "mxoptions")
+    folder = paths.RUNTIME
     path = os.path.join(folder, "script-" + hashlib.sha1(text.encode()).hexdigest()[:16])
     try:
         os.makedirs(folder, mode=0o700, exist_ok=True)
@@ -327,35 +354,28 @@ def run_script(script):
     _spawn([path])
 
 
-def klipper(method, *args):
-    """Call KDE's clipboard service; returns the reply value, or None when it is unavailable."""
-    try:
-        from PySide6.QtDBus import QDBus, QDBusConnection, QDBusMessage
-
-        message = QDBusMessage.createMethodCall("org.kde.klipper", "/klipper", "org.kde.klipper.klipper", method)
-        message.setArguments(list(args))
-        reply = QDBusConnection.sessionBus().call(message, QDBus.CallMode.Block, 700)
-        if reply.type() != QDBusMessage.MessageType.ReplyMessage:
-            return None
-        values = reply.arguments()
-        return values[0] if values else True
-    except Exception:
-        log.exception("clipboard call failed")
-        return None
-
-
 def insert_text(vinput, text):
     """Put ``text`` at the cursor: paste it through the clipboard, restoring what was there."""
     if not text or vinput is None:
         return
-    previous = klipper("getClipboardContents")
-    if previous is None or klipper("setClipboardContents", text) is None:
-        vinput.type_ascii(text)  # no clipboard service: plain typing, US layout only
+    from . import clipboard  # it needs Qt, which the rest of this module does without
+
+    previous = clipboard.get_text()
+    if previous is None or not clipboard.set_text(text):
+        vinput.type_ascii(text)  # no way to the clipboard from here: plain typing, US layout only
         return
     time.sleep(0.07)
     vinput.tap(["KEY_LEFTCTRL", "KEY_V"])
     time.sleep(0.18)
-    klipper("setClipboardContents", previous)
+    clipboard.set_text(previous)
+
+
+def here(action):
+    """``action``, or if it only names something the desktop does in its own way, what does that on this desktop
+    (nothing, where the desktop has no way)."""
+    if (action or {}).get("type") == "desktop":
+        return environment.resolve(action.get("do")) or NONE
+    return action
 
 
 class MacroRunner:
@@ -430,6 +450,9 @@ class Executor:
         self.macros.stop()
 
     def press(self, action):
+        if action.get("type") == "desktop":
+            self.trigger(action)  # done once, however long the button is held: a held key combination would repeat
+            return
         kind = action.get("type")
         if kind == "keys":
             if self.vinput:
@@ -468,6 +491,7 @@ class Executor:
 
     def trigger(self, action):
         """Press and release in one go (gestures, ring bubbles, thumb wheel steps)."""
+        action = here(action)
         kind = (action or {}).get("type")
         if kind == "keys":
             if self.vinput:

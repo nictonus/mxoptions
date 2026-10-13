@@ -2,12 +2,16 @@
 Also what makes other mice than the MX Master 4 work: their battery, and which picture they get."""
 
 import struct
+import sys
 import unittest
 
-from evdev import ecodes as e
+if sys.platform == "win32":
+    raise unittest.SkipTest("the virtual gamepad is made with uinput, which is Linux's")
 
-from tests.support import make_engine
-from mxoptions import device, rumble
+from evdev import ecodes as e  # noqa: E402
+
+from tests.support import make_engine  # noqa: E402
+from mxoptions import device, rumble  # noqa: E402
 
 
 def effect(kind, effect_id=0, length=0, strong=0, weak=0, magnitude=0):

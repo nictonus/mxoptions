@@ -2,12 +2,19 @@
 
 import locale
 import os
+import sys
 
 _catalogue = {}
 language = "en"
 
 
 def _system_language():
+    if sys.platform == "win32":
+        import ctypes
+
+        name = ctypes.create_unicode_buffer(85)  # "uk-UA"
+        if ctypes.windll.kernel32.GetUserDefaultLocaleName(name, len(name)):
+            return name.value.split("-")[0].lower()
     for var in ("LC_ALL", "LC_MESSAGES", "LANGUAGE", "LANG"):
         value = os.environ.get(var)
         if value:

@@ -9,7 +9,10 @@ import logging
 import os
 import shutil
 import stat
+import sys
 import time
+
+from . import paths
 
 log = logging.getLogger(__name__)
 
@@ -17,7 +20,7 @@ CHUNK = 64 * 1024        # bytes of a file sent in one piece
 MAX_ENTRIES = 5000       # files and folders in one go; more is not something to send by accident
 MAX_DEPTH = 40
 KEEP_FOR = 24 * 3600.0   # s received files are kept waiting to be pasted
-STAGING = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "mxoptions", "flow-files")
+STAGING = os.path.join(paths.CACHE, "flow-files")
 
 
 class Refused(Exception):
@@ -105,6 +108,21 @@ def safe_parts(relative):
     return parts if len(parts) <= MAX_DEPTH + 2 else None
 
 
+_NOT_ON_WINDOWS = '<>:"\\|?*'
+_DEVICES = {"CON", "PRN", "AUX", "NUL", *(f"COM{n}" for n in range(1, 10)), *(f"LPT{n}" for n in range(1, 10))}
+
+
+def local_name(part, windows=sys.platform == "win32"):
+    """A file or folder name from another computer as it can be written here. Linux takes any name; Windows
+    has characters and whole names a file cannot have, and those are changed as little as will do."""
+    if not windows:
+        return part
+    made = "".join("_" if ch in _NOT_ON_WINDOWS or ord(ch) < 32 else ch for ch in part).rstrip(". ")
+    if not made or made.split(".")[0].upper() in _DEVICES:
+        made = "_" + made
+    return made
+
+
 def sweep(base=STAGING, keep_for=KEEP_FOR):
     """Remove received files nobody pasted in time."""
     try:
@@ -159,7 +177,7 @@ class Receiver:
             if parts is None or not isinstance(size, int) or isinstance(size, bool) or size < 0:
                 raise Refused("bad name")
             total += size
-            checked.append({"parts": parts, "dir": bool(item.get("dir")), "size": size,
+            checked.append({"parts": [local_name(part) for part in parts], "dir": bool(item.get("dir")), "size": size,
                             "mtime": item.get("mtime") if isinstance(item.get("mtime"), int) else None, "x": bool(item.get("x"))})
         if total > limit:
             raise Refused("too big")
