@@ -118,9 +118,9 @@ ordinary window, which takes the focus while it is open.
 (`ksystem`, `qt`, `wl-clipboard`, `klipper`, `none`) override what the program works out for
 itself, should it get one of them wrong.
 
-## Windows (in progress)
+## Windows
 
-The program is being ported to Windows. `python tools\build_windows.py` (with Python 3.13,
+The program also runs on Windows (11 was tried, 10 was not). `python tools\build_windows.py` (with Python 3.13,
 `pip install PySide6 numpy pyinstaller`, and Inno Setup for the last of the three) makes a folder
 with `mxoptions.exe`, a zip of it, and an installer, `mxoptions-<version>-setup.exe`. The installer
 puts the program into the user's own program folder, asks for no administrator, adds a Start menu
@@ -167,9 +167,9 @@ made). Without the driver the settings say so. With ViGEmBus 1.22.0 it was run w
 standing in for a game: what that sent to the controller's motors through XInput was played on the
 mouse. No game itself was tried.
 
-Used by hand on Windows so far: the main buttons, the haptic panel opening the ring, and crossing at the
-screen edge to a Linux computer and back. Not tried: gestures and the wheels by hand (the same code as
-on Linux), the Bolt receiver (written, never plugged in there), and game rumble in a game itself.
+Used by hand on Windows: the buttons, gestures, the wheels, the Actions Ring, and crossing at the screen
+edge to a Linux computer and back. Not tried: the Bolt receiver (written, never plugged in there), and
+game rumble in a game itself.
 Not there yet: letting Flow be found by other computers (Windows' firewall asks about that; the
 Windows side calls the other computer itself, which needs no permission).
 
@@ -220,7 +220,7 @@ the package with its dependencies and run the tests there. They download a few h
 Take `mxoptions-<version>-setup.exe` from the [releases](https://github.com/nictonus/mxoptions/releases)
 and run it; it installs for your user and asks for no administrator. It is not signed, so Windows
 asks before running it ("More info", then "Run anyway"). Close Logi Options+ first, as set out under
-[Windows (in progress)](#windows-in-progress), which also says what does and does not work there yet.
+[Windows](#windows), which also says what does and does not work there yet.
 
 ### Any distribution, for your user only (no root)
 

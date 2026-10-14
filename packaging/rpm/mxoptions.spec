@@ -4,11 +4,11 @@
 #
 # The archive is the one GitHub makes for a tag:  https://github.com/nictonus/mxoptions/tags
 
-%global tag     v0.10.0-beta.3
-%global srcdir  mxoptions-0.10.0-beta.3
+%global tag     v0.10.0
+%global srcdir  mxoptions-0.10.0
 
 Name:           mxoptions
-Version:        0.10.0~b3
+Version:        0.10.0
 Release:        1%{?dist}
 Summary:        Settings for Logitech MX Master mice
 
@@ -69,6 +69,9 @@ udevadm trigger --sysname-match=uinput >/dev/null 2>&1 || :
 %{_udevrulesdir}/70-mxoptions.rules
 
 %changelog
+* Wed Oct 14 2026 nictonus <nictonus@users.noreply.github.com> - 0.10.0-1
+- 0.10.0: Flow, desktops other than KDE Plasma, Windows
+
 * Wed Oct 14 2026 nictonus <nictonus@users.noreply.github.com> - 0.10.0~b3-1
 - Works on desktops other than KDE Plasma; first build for Windows
 
