@@ -9,7 +9,7 @@ import signal
 import sys
 import time
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QCoreApplication, QObject, QTimer, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
@@ -142,6 +142,12 @@ def main(argv=None):
         print(f"{'installed' if args.install else 'removed'}: {desktop.LAUNCHER_PATH}")
         return 0
 
+    if args.call:
+        # Asking the running program needs no window and no desktop: it has to work from a script, a timer or a
+        # remote shell, where a program with windows could not even start.
+        _plain = QCoreApplication(sys.argv[:1])  # noqa: F841 (Qt wants one to exist while sockets are used)
+        return _ask_running_instance(args.call[0], args.call[1:])
+
     first_run = not config.exists()
     cfg = config.load()
     i18n.setup(cfg["app"]["language"])
@@ -151,8 +157,6 @@ def main(argv=None):
     app.setApplicationDisplayName(APP_NAME)
     app.setDesktopFileName(APP_ID)
     app.setQuitOnLastWindowClosed(False)
-    if args.call:
-        return _ask_running_instance(args.call[0], args.call[1:])
     if _notify_running_instance(show=not args.background):
         return 0
     if not args.background and os.environ.get("MXOPTIONS_LAUNCHER") and desktop.start_service():
