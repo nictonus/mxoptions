@@ -215,6 +215,43 @@ report what does not fit. `make deb-test` and `make rpm` do that trial: they fet
 Debian or Fedora image, enter it without root or a container engine (`tools/distro.py`), install
 the package with its dependencies and run the tests there. They download a few hundred megabytes.
 
+### NixOS and other Nix systems
+
+The flake builds the program with the distribution's PySide6, so the Actions Ring can use the
+system's layer-shell module. It also brings the udev rules, the desktop entry, the icon and a
+systemd user service.
+
+From a checkout, with flakes enabled:
+
+```sh
+nix run .#              # start it without installing
+nix build .#            # ./result/bin/mxoptions
+nix develop             # dependencies for running the tests and the program
+```
+
+On NixOS, add the flake as an input and import its module:
+
+```nix
+{
+  inputs.mxoptions.url = "github:nictonus/mxoptions";  # or a path:/local/checkout
+  inputs.mxoptions.inputs.nixpkgs.follows = "nixpkgs";
+
+  # ...
+  imports = [ inputs.mxoptions.nixosModules.default ];
+  services.mxoptions.enable = true;
+}
+```
+
+The module installs the package and its udev rules and starts a systemd *user* service with the
+graphical session. `services.mxoptions.fwupd = true;` puts `fwupdmgr` on the program's PATH for the
+firmware page (fwupd itself is still enabled with `services.fwupd.enable = true;`). To leave out the
+optional numpy and the glossy 3D model:
+
+```nix
+services.mxoptions.package =
+  inputs.mxoptions.packages.${pkgs.stdenv.hostPlatform.system}.mxoptions.override { withNumpy = false; };
+```
+
 ### Windows
 
 Take `mxoptions-<version>-setup.exe` from the [releases](https://github.com/nictonus/mxoptions/releases)

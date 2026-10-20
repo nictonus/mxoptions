@@ -4,6 +4,10 @@ __pycache__/
 /dist/
 *.egg-info/
 
+# nix build output
+/result
+/result-*
+
 # makepkg leftovers
 /packaging/aur/pkg/
 /packaging/aur/src/
