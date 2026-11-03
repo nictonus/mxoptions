@@ -5,7 +5,7 @@
 # To publish a new version:            make aur   (from the top of the source tree)
 
 pkgname=mxoptions
-pkgver=0.9.0
+pkgver=0.10.0
 pkgrel=1
 pkgdesc="Settings for Logitech MX Master mice: buttons, gestures, Actions Ring, wheels and haptics"
 arch=('any')
@@ -17,7 +17,7 @@ optdepends=('python-numpy: glossy 3D mouse model and soft shadows'
             'wl-clipboard: the same where kguiaddons cannot reach the clipboard (GNOME)')
 install=mxoptions.install
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('20e4c6c2cd739366cbbd422587beff329d8a6a6f756845202358f835f5cb089b')
+sha256sums=('4a9a6636fbb615e70c79de48e4a513afb3d78b080e8171ebee38d9d7c3e99ace')
 
 check() {
   cd "$pkgname-$pkgver"

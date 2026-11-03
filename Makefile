@@ -74,6 +74,9 @@ rpm: build
 # What a release on GitHub carries: the Arch package (built by packaging/aur/PKGBUILD from the
 # tagged source archive, so the tag has to be pushed first), the wheel, and their checksums.
 dist:
+	@version=$$($(PYTHON) -c 'import mxoptions; print(mxoptions.__version__)'); \
+	grep -qx "pkgver=$$version" packaging/aur/PKGBUILD || { \
+		echo "packaging/aur/PKGBUILD is not at $$version: set pkgver and sha256sums for the pushed tag" >&2; exit 1; }
 	rm -rf dist build
 	mkdir -p dist build/makepkg
 	$(PYTHON) -m build --wheel --no-isolation --outdir dist
