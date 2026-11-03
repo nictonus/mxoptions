@@ -52,6 +52,9 @@ in
       partOf = [ "graphical-session.target" ];
       after = [ "graphical-session.target" ];
       wantedBy = [ "graphical-session.target" ];
+      # Without this NixOS sets a PATH of coreutils and the like, and commands assigned to buttons
+      # would not find the user's programs. The user manager's own PATH has them.
+      environment.PATH = lib.mkForce null;
       serviceConfig = {
         ExecStart = "${package}/bin/mxoptions --background";
         Restart = "on-failure";
