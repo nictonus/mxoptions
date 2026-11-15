@@ -1,54 +1,22 @@
 """Main window: sidebar with the device status and navigation, pages on the right."""
 
-from PySide6.QtCore import QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup, QFrame, QHBoxLayout, QLabel, QMainWindow, QPushButton, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from .. import APP_NAME, device
 from ..i18n import _
-from . import theme
+from . import icons
 from .flow_page import FlowPage
 from .gestures_page import GesturesPage
 from .keyboard_page import CHARGING, KeyboardPage, KeysPage, battery_text
 from .pages import ButtonsPage, DevicePage, HapticsPage, PointScrollPage
 from .ring_page import RingPage
-from .widgets import ui_scale
+from .widgets import BatteryIcon, ui_scale
 
-
-class BatteryIcon(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._percent = None
-        self._charging = False
-        self.setFixedSize(QSize(30, 16))
-
-    def set_level(self, percent, charging):
-        self._percent, self._charging = percent, charging
-        self.update()
-
-    def paintEvent(self, _event):
-        if self._percent is None:
-            return
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        body = QRectF(1, 2, 24, 12)
-        painter.setPen(QPen(QColor(theme.MUTED), 1.3))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRoundedRect(body, 3.5, 3.5)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(theme.MUTED))
-        painter.drawRoundedRect(QRectF(26, 5.5, 2.5, 5), 1, 1)
-        if self._charging or self._percent > 30:
-            color = theme.ACCENT
-        elif self._percent > 15:
-            color = theme.WARN
-        else:
-            color = theme.DANGER
-        painter.setBrush(QColor(color))
-        width = max(2.0, (body.width() - 5) * min(100, self._percent) / 100.0)
-        painter.drawRoundedRect(QRectF(body.left() + 2.5, body.top() + 2.5, width, body.height() - 5), 1.5, 1.5)
+NAV_ICON = 18  # px: the pages' icons in the sidebar (freedesktop names), shown where the icon theme has them
 
 
 class MainWindow(QMainWindow):
@@ -73,6 +41,7 @@ class MainWindow(QMainWindow):
         side = QVBoxLayout(sidebar)
         side.setContentsMargins(16, 24, 16, 16)
         side.setSpacing(4)
+        side.addWidget(self._kind(_("Mouse")))
         self.device_name = QLabel(_("No mouse"))
         self.device_name.setObjectName("deviceName")
         self.device_name.setWordWrap(True)
@@ -85,7 +54,7 @@ class MainWindow(QMainWindow):
         self.device_status.setObjectName("deviceStatus")
         status_line.addWidget(self.device_status, 1)
         side.addLayout(status_line)
-        side.addSpacing(22)
+        side.addSpacing(14)
 
         self.stack = QStackedWidget()
         self._nav = QButtonGroup(self)
@@ -94,22 +63,17 @@ class MainWindow(QMainWindow):
         gestures_page = GesturesPage(store)
         gestures_page.edit_actions.connect(self._edit_button)
         pages = [
-            (_("Buttons"), self.buttons_page),
-            (_("Gestures"), gestures_page),
-            (_("Point & scroll"), PointScrollPage(store)),
-            (_("Haptics"), HapticsPage(store)),
-            (_("Actions Ring"), RingPage(store)),
-            (_("Flow"), FlowPage(store)),
-            (_("Device & app"), DevicePage(store)),
+            (_("Buttons"), self.buttons_page, "input-mouse"),
+            (_("Gestures"), gestures_page, "transform-move"),
+            (_("Point & scroll"), PointScrollPage(store), "input-touchpad"),
+            (_("Haptics"), HapticsPage(store), "audio-volume-medium"),
+            (_("Actions Ring"), RingPage(store), "view-grid"),
+            (_("Flow"), FlowPage(store), "network-connect"),
+            (_("Device & app"), DevicePage(store), "configure"),  # the app's own settings: at the foot of the sidebar
         ]
-        for index, (title, page) in enumerate(pages):
-            button = QPushButton(title.replace("&", "&&"))
-            button.setObjectName("navButton")
-            button.setCheckable(True)
-            button.setCursor(Qt.CursorShape.PointingHandCursor)
-            button.clicked.connect(lambda _checked=False, i=index: self.stack.setCurrentIndex(i))
-            self._nav.addButton(button, index)
-            side.addWidget(button)
+        for index, (title, page, icon) in enumerate(pages):
+            if index < len(pages) - 1:  # the last one's button is made last, so that Tab reaches it last as well
+                side.addWidget(self._nav_button(title, index, icon))
             self.stack.addWidget(page)
         self._nav.button(0).setChecked(True)
         # The keyboard, under the mouse: shown once one was seen, or its keys have settings.
@@ -117,6 +81,7 @@ class MainWindow(QMainWindow):
         block = QVBoxLayout(self.keyboard_block)
         block.setContentsMargins(0, 22, 0, 0)
         block.setSpacing(4)
+        block.addWidget(self._kind(_("Keyboard")))
         self.keyboard_name = QLabel()
         self.keyboard_name.setObjectName("deviceName")
         self.keyboard_name.setWordWrap(True)
@@ -129,23 +94,33 @@ class MainWindow(QMainWindow):
         self.keyboard_status.setObjectName("deviceStatus")
         status_line.addWidget(self.keyboard_status, 1)
         block.addLayout(status_line)
-        block.addSpacing(22)
-        for title, page in ((_("Keys"), KeysPage(store)), (_("Keyboard"), KeyboardPage(store))):
-            index = self.stack.count()
-            button = QPushButton(title)
-            button.setObjectName("navButton")
-            button.setCheckable(True)
-            button.setCursor(Qt.CursorShape.PointingHandCursor)
-            button.clicked.connect(lambda _checked=False, i=index: self.stack.setCurrentIndex(i))
-            self._nav.addButton(button, index)
-            block.addWidget(button)
+        block.addSpacing(14)
+        for title, page, icon in ((_("Keys"), KeysPage(store), "input-keyboard"),
+                                  (_("Keyboard"), KeyboardPage(store), "preferences-desktop-keyboard")):
+            block.addWidget(self._nav_button(title, self.stack.count(), icon))
             self.stack.addWidget(page)
         self._keyboard_pages = range(len(pages), self.stack.count())
         self.keyboard_block.hide()
         side.addWidget(self.keyboard_block)
         side.addStretch(1)
-        widest = max(button.fontMetrics().horizontalAdvance(title) for button, (title, _page) in zip(self._nav.buttons(), pages))
-        sidebar.setFixedWidth(max(214, int(widest * 1.1) + 72))  # the stylesheet font is a little larger
+        line = QFrame()
+        line.setObjectName("separator")
+        side.addWidget(line)
+        side.addSpacing(6)
+        settings = len(pages) - 1
+        side.addWidget(self._nav_button(pages[settings][0], settings, pages[settings][2]))
+        widest = max(self._nav.button(index).fontMetrics().horizontalAdvance(title)
+                     for index, (title, _page, _icon) in enumerate(pages))
+        with_icons = any(not button.icon().isNull() for button in self._nav.buttons())
+        if with_icons:  # a page the icon theme has no icon for keeps the room of one, so that the names line up
+            blank = QPixmap(NAV_ICON, NAV_ICON)
+            blank.fill(Qt.GlobalColor.transparent)
+            for button in self._nav.buttons():
+                if button.icon().isNull():
+                    button.setIcon(QIcon(blank))
+                    button.setIconSize(QSize(NAV_ICON, NAV_ICON))
+        # the stylesheet font is a little larger; an icon takes its width and a gap
+        sidebar.setFixedWidth(max(214, int(widest * 1.1) + 72 + (NAV_ICON + 8 if with_icons else 0)))
         layout.addWidget(sidebar)
 
         right = QVBoxLayout()
@@ -169,6 +144,26 @@ class MainWindow(QMainWindow):
         store.state_changed.connect(self._state)
         store.changed.connect(self._show_keyboard)
         self._state(store.state)
+
+    @staticmethod
+    def _kind(text):
+        """The small heading over a device in the sidebar: what kind of device it is."""
+        label = QLabel(text.upper())
+        label.setObjectName("deviceKind")
+        return label
+
+    def _nav_button(self, title, index, icon):
+        """The sidebar's button for page ``index``, with ``icon`` where the icon theme has it."""
+        button = QPushButton(title.replace("&", "&&"))
+        button.setObjectName("navButton")
+        button.setCheckable(True)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        if icons.has(icon):
+            button.setIcon(icons.icon(icon))
+            button.setIconSize(QSize(NAV_ICON, NAV_ICON))
+        button.clicked.connect(lambda _checked=False, i=index: self.stack.setCurrentIndex(i))
+        self._nav.addButton(button, index)
+        return button
 
     def _show_keyboard(self):
         found = self.store.state.get("keyboard")

@@ -197,6 +197,40 @@ class InfoButton(QAbstractButton):
         painter.drawRoundedRect(QRectF(centre.x() - 0.8, centre.y() - 1.4, 1.6, 5.2), 0.8, 0.8)  # the stem
 
 
+class BatteryIcon(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._percent = None
+        self._charging = False
+        self.setFixedSize(QSize(30, 16))
+
+    def set_level(self, percent, charging):
+        self._percent, self._charging = percent, charging
+        self.update()
+
+    def paintEvent(self, _event):
+        if self._percent is None:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        body = QRectF(1, 2, 24, 12)
+        painter.setPen(QPen(QColor(theme.MUTED), 1.3))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(body, 3.5, 3.5)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(theme.MUTED))
+        painter.drawRoundedRect(QRectF(26, 5.5, 2.5, 5), 1, 1)
+        if self._charging or self._percent > 30:
+            color = theme.ACCENT
+        elif self._percent > 15:
+            color = theme.WARN
+        else:
+            color = theme.DANGER
+        painter.setBrush(QColor(color))
+        width = max(2.0, (body.width() - 5) * min(100, self._percent) / 100.0)
+        painter.drawRoundedRect(QRectF(body.left() + 2.5, body.top() + 2.5, width, body.height() - 5), 1.5, 1.5)
+
+
 def titled(label, info):
     """A caption with its info button right after it, as one line."""
     line = QHBoxLayout()

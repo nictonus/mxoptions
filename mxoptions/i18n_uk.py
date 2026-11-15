@@ -794,7 +794,6 @@ STRINGS = {
 
     # the keyboard
     "Keyboard": "Клавіатура",
-    "Status": "Стан",
     "Battery": "Акумулятор",
     "Key {}": "Клавіша {}",
     "Fn lock": "Фіксація Fn",
@@ -842,7 +841,6 @@ STRINGS = {
     "Firmware {}": "Прошивка {}",
     "Read from the keyboard. fwupd, the system's firmware updater, does not see it right now.":
         "Прочитано з клавіатури. fwupd, системний засіб оновлення прошивок, зараз її не бачить.",
-    "Keyboard settings": "Налаштування клавіатури",
     "Settings the keyboard controls itself. Changes are made on the keyboard. Its own shortcuts may change them too.":
         "Налаштування, якими клавіатура керує сама. Зміни робляться на клавіатурі. Її власні сполучення клавіш теж "
         "можуть їх змінювати.",
@@ -863,6 +861,27 @@ STRINGS = {
         "Клавіатура може міняти, що дає верхній ряд без Fn: F1–F12 чи свої інші функції, як описано в її посібнику. "
         "MX Options поки цього не змінює.",
     "Backlight": "Підсвітка",
+    # keyboard pages: cards, Easy-Switch channels, key groups, the names of keys
+    "Typing": "Друк",
+    "Firmware & reset": "Прошивка і скидання",
+    "Channel {}: {}": "Канал {}: {}",
+    "Left as they are": "Залишено як є",
+    "General": "Загальне",
+    "Fn": "Fn",
+    "Screen brightness down": "Яскравість екрана нижче",
+    "Screen brightness up": "Яскравість екрана вище",
+    "Task view": "Перегляд завдань",
+    "Action center": "Центр дій",
+    "Play/Pause": "Відтворення/пауза",
+    "Dictation": "Диктування",
+    "Emoji": "Емодзі",
+    "Print Screen": "Print Screen",
+    "Search": "Пошук",
+    "Switch app": "Перемкнути програму",
+    "View open apps": "Відкриті програми",
+    "View all apps": "Усі програми",
+    "Language switch": "Зміна мови",
+    "AI prompt": "Запит до ШІ",
     "The keyboard has a backlight with settings of its own, set on the keyboard as its guide describes. MX Options "
     "does not change them yet.":
         "Клавіатура має підсвітку з власними налаштуваннями, які задають на самій клавіатурі, як описано в її "

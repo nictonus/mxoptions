@@ -1,25 +1,53 @@
 """The keyboard's two pages: what its keys do, and the keyboard itself (battery, Easy-Switch, firmware)."""
 
 from PySide6.QtCore import QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import (
-    QAbstractButton, QComboBox, QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
+    QAbstractButton, QComboBox, QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout,
+    QWidget,
 )
 
 from .. import APP_NAME, actions, config, device, firmware, keyboard
 from ..i18n import _
-from . import theme
+from . import icons, theme
 from .action_picker import ActionPicker
 from .pages import FirmwareQuery, ScrollPage, _header
-from .widgets import Card, Row, Segmented, SliderRow, Switch, hint_label
+from .widgets import BatteryIcon, Card, Row, Segmented, SliderRow, Switch, hint_label
 
 # What a key may not do: what only makes sense on the mouse (catalogue ids, see config.KEYBOARD_ACTIONS)
 KEYBOARD_EXCLUDE = ("gestures", "wheel_mode", "dpi_cycle", "dpi_shift", "flow", "spotlight")
+# Headings of the action list for a key, where the catalogue's speak of the mouse (actions.CATEGORIES)
+KEYBOARD_TITLES = {"mouse": "General"}
 # Names for the keys whose control ids are known (Solaar's list of them): every other key goes by its id.
 KEY_LABELS = {
     0x00D1: "Easy-Switch 1", 0x00D2: "Easy-Switch 2", 0x00D3: "Easy-Switch 3",
     0x0034: "Fn", 0x00CD: "Fn lock", 0x0101: "Fn lock key", 0x00DE: "F-Lock",
     0x00E2: "Backlight down", 0x00E3: "Backlight up",
+    0x00C7: "Screen brightness down", 0x00C8: "Screen brightness up", 0x00E0: "Task view", 0x00E1: "Action center",
+    0x00E4: "Previous track", 0x00E5: "Play/Pause", 0x0141: "Play/Pause", 0x00E6: "Next track", 0x00E7: "Mute",
+    0x00E8: "Volume down", 0x00E9: "Volume up", 0x0003: "Mute", 0x0005: "Next track", 0x0006: "Previous track",
+    0x0103: "Dictation", 0x0108: "Emoji", 0x010A: "Screenshot", 0x00BF: "Screenshot", 0x004C: "Print Screen",
+    0x011C: "Mute microphone", 0x011D: "Do not disturb", 0x000A: "Calculator", 0x006E: "Show desktop",
+    0x006F: "Lock screen", 0x00C2: "Lock screen", 0x00CC: "Switch app", 0x00CA: "View open apps",
+    0x00CB: "View all apps", 0x00D4: "Search", 0x00DD: "Language switch", 0x0121: "Language switch",
+    0x01B4: "AI prompt", 0x01A9: "Cut", 0x01AA: "Copy", 0x01AB: "Paste",
+}
+# The order of the keys on the Keys page: as they sit along the top row of an MX keyboard; others after, by id
+KEY_ORDER = (0x00D1, 0x00D2, 0x00D3, 0x00C7, 0x00C8, 0x00E0, 0x00E1, 0x00E2, 0x00E3, 0x0103, 0x0108, 0x010A, 0x00BF,
+             0x011C, 0x00E4, 0x00E5, 0x0141, 0x00E6, 0x00E7, 0x00E8, 0x00E9, 0x000A, 0x0034)
+# The icon on a key's cap (freedesktop names), drawn where the icon theme has it
+KEY_ICONS = {
+    0x00D1: "computer", 0x00D2: "computer", 0x00D3: "computer",
+    0x00C7: "brightness-low", 0x00C8: "brightness-high", 0x00E0: "preferences-system-windows",
+    0x00E1: "preferences-desktop-notification", 0x00E2: "keyboard-brightness", 0x00E3: "keyboard-brightness",
+    0x00E4: "media-skip-backward", 0x00E5: "media-playback-start", 0x0141: "media-playback-start",
+    0x00E6: "media-skip-forward", 0x00E7: "audio-volume-muted", 0x00E8: "audio-volume-low", 0x00E9: "audio-volume-high",
+    0x0003: "audio-volume-muted", 0x0005: "media-skip-forward", 0x0006: "media-skip-backward",
+    0x0103: "audio-input-microphone", 0x0108: "face-smile", 0x010A: "camera-photo", 0x00BF: "camera-photo",
+    0x004C: "camera-photo", 0x011C: "microphone-sensitivity-muted", 0x011D: "notifications-disabled",
+    0x000A: "accessories-calculator", 0x006E: "user-desktop", 0x006F: "system-lock-screen", 0x00C2: "system-lock-screen",
+    0x00CC: "preferences-system-windows", 0x00D4: "system-search", 0x01A9: "edit-cut", 0x01AA: "edit-copy",
+    0x01AB: "edit-paste",
 }
 # Why a key is left as it is (keyboard.KeyboardSide._keys)
 KEY_REASONS = {
@@ -46,7 +74,7 @@ FAILED = {
 SETTINGS = {
     "fn": ("Fn lock", "The keyboard can swap whether the top row gives F1–F12 or its other functions without Fn, "
            "as its guide describes. MX Options does not change this yet."),
-    "backlight": ("Backlight", "The keyboard has a backlight with settings of its own, set on the keyboard as its guide "
+    "backlight": ("Backlight on", "The keyboard has a backlight with settings of its own, set on the keyboard as its guide "
                   "describes. MX Options does not change them yet."),
     "platform": ("Operating system layout", "The keyboard can be set up for the layout of another operating system, on "
                  "the keyboard itself as its guide describes. MX Options does not change this yet."),
@@ -99,7 +127,9 @@ TIMER_ROWS = (
      "How long the backlight stays on after you type, while the keyboard is charging over USB."),
 )
 TIMER_STOPS = (5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200)  # s
-CAP_W, CAP_H, CAP_GAP, PAD = 152, 54, 8, 18
+CAP_MIN_W, CAP_H, CAP_GAP, PAD = 168, 66, 10, 18  # px: the keys that can be changed
+KEPT_MIN_W, KEPT_H, GROUP_H = 132, 40, 30  # px: the keys the keyboard keeps, and the caption over them
+RIM = 14  # px: the rim along the top of the keyboard
 CHARGING = (device.BATTERY_CHARGING, device.BATTERY_ALMOST_FULL, device.BATTERY_SLOW_CHARGE)
 
 
@@ -134,6 +164,38 @@ def key_title(key):
     return _(label) if label else _("Key {}").format(key["id"])
 
 
+def key_kept(key):
+    """Whether the keyboard keeps ``key`` as it is: it cannot be given an action here."""
+    return bool(key["protected"]) or key["native_reason"] in KEY_REASONS
+
+
+def key_sort(keys):
+    """``keys`` in the order the Keys page shows them: those that can be changed first, then those the keyboard keeps;
+    each in the order of KEY_ORDER, the others after it by control id."""
+    def place(key):
+        cid = key["cid"]
+        return key_kept(key), KEY_ORDER.index(cid) if cid in KEY_ORDER else len(KEY_ORDER), cid
+    return sorted(keys, key=place)
+
+
+def first_key(keys, chosen=None):
+    """The key to pick on the Keys page: ``chosen`` while it is there, else the first that can be changed, else the
+    first; None without keys."""
+    ids = [key["id"] for key in keys]
+    if chosen in ids:
+        return chosen
+    ordered = key_sort(keys)
+    return next((key["id"] for key in ordered if not key_kept(key)), ordered[0]["id"] if ordered else None)
+
+
+def confirm_restore(parent, store):
+    """Ask, then give every key of the keyboard back its own function, in every app."""
+    answer = QMessageBox.question(parent, APP_NAME, _(
+        "Give every key of the keyboard back its own function, in every app? The keys set for single apps go too."))
+    if answer == QMessageBox.StandardButton.Yes:
+        store.restore_keyboard()
+
+
 def block_text(reason):
     text = _(BLOCK_REASONS[reason])
     return text.format(keyboard.JOURNAL) if reason == "journal" else text
@@ -165,11 +227,10 @@ class KeyCap(QAbstractButton):
         self.setAutoExclusive(True)  # the arrow keys move between the keys, and pick the one they move to
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFixedSize(CAP_W, CAP_H)
-        self.key, self.value = key, ""
+        self.key, self.value, self.changed = key, "", False
 
-    def show_key(self, key, value):
-        self.key, self.value = key, value
+    def show_key(self, key, value, changed=False):
+        self.key, self.value, self.changed = key, value, changed
         self.setAccessibleName(key_title(key))
         self.setAccessibleDescription(value)
         self.update()
@@ -177,50 +238,92 @@ class KeyCap(QAbstractButton):
     def paintEvent(self, _event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        key, rect = self.key, QRectF(0, 0, CAP_W, CAP_H)
-        chosen = self.isChecked()
-        kept = key["protected"] or key["native_reason"] in KEY_REASONS
-        painter.setPen(QPen(QColor(theme.ACCENT_INK), 2) if chosen else QPen(QColor(theme.BORDER), 1))
-        painter.setBrush(QColor(theme.CARD_HOVER if chosen else theme.CARD))
-        painter.drawRoundedRect(rect.adjusted(0, 0, 0, -3), 9, 9)
+        key, rect = self.key, QRectF(self.rect())
+        if key_kept(key):
+            self._paint_kept(painter, rect)
+        else:
+            self._paint_key(painter, rect)
         if self.hasFocus():  # where the keyboard is: a second outline inside the first
             painter.setPen(QPen(QColor(theme.ACCENT), 1, Qt.PenStyle.DashLine))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRoundedRect(rect.adjusted(3, 3, -3, -6), 7, 7)
-        painter.setPen(QPen(QColor(theme.MODEL_EDGE), 1))  # the keycap's skirt
-        painter.drawLine(rect.left() + 8, rect.bottom() - 1, rect.right() - 8, rect.bottom() - 1)
-        text = rect.adjusted(12, 7, -12, -9)
-        small = QFontMetrics(painter.font())
-        painter.setPen(QColor(theme.MUTED if not kept else theme.DISABLED))
-        painter.drawText(text, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
-                         small.elidedText(key_title(key), Qt.TextElideMode.ElideRight, int(text.width())))
-        font = painter.font()
-        font.setBold(not kept)
-        painter.setFont(font)
-        painter.setPen(QColor(theme.DISABLED if kept else theme.TEXT))
-        painter.drawText(text, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom,
-                         QFontMetrics(font).elidedText(self.value, Qt.TextElideMode.ElideRight, int(text.width())))
         if key["active"]:  # the program has this key now
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(theme.ACCENT))
             painter.drawEllipse(QRectF(rect.right() - 13, rect.top() + 8, 5, 5))
 
+    def _paint_key(self, painter, rect):
+        """A key that can be changed: a raised cap with its icon and name, and under them what it does."""
+        chosen = self.isChecked()
+        painter.setPen(QPen(QColor(theme.ACCENT_INK), 2) if chosen else QPen(QColor(theme.BORDER), 1))
+        painter.setBrush(QColor(theme.CARD_HOVER if chosen else theme.CARD))
+        body = rect.adjusted(1, 1, -1, -3)
+        painter.drawRoundedRect(body, 10, 10)
+        painter.setPen(QPen(QColor(theme.MODEL_EDGE), 1))  # the keycap's skirt
+        painter.drawLine(rect.left() + 10, rect.bottom() - 1, rect.right() - 10, rect.bottom() - 1)
+        if self.changed:  # set to something else than its own function: a bar of the accent along its left edge
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(theme.ACCENT))
+            painter.drawRoundedRect(QRectF(body.left() + 4, body.top() + 12, 3, body.height() - 24), 1.5, 1.5)
+        text = rect.adjusted(16, 10, -16, -12)
+        name = icons.icon(KEY_ICONS.get(self.key["cid"], "")) if icons.has(KEY_ICONS.get(self.key["cid"], "")) else None
+        title = QRectF(text)
+        if name is not None:
+            name.paint(painter, int(text.left()), int(text.top()), 18, 18)
+            title.setLeft(text.left() + 26)
+        font = painter.font()
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        painter.setPen(QColor(theme.TEXT))
+        painter.drawText(title, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+                         QFontMetrics(font).elidedText(key_title(self.key), Qt.TextElideMode.ElideRight, int(title.width())))
+        font.setWeight(QFont.Weight.Normal)
+        painter.setFont(font)
+        painter.setPen(QColor(theme.ACCENT_INK if self.changed else theme.MUTED))
+        painter.drawText(text, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom,
+                         QFontMetrics(font).elidedText(self.value, Qt.TextElideMode.ElideRight, int(text.width())))
+
+    def _paint_kept(self, painter, rect):
+        """A key the keyboard keeps: flat, with a padlock and its name only."""
+        chosen = self.isChecked()
+        painter.setPen(QPen(QColor(theme.ACCENT_INK), 2) if chosen else QPen(QColor(theme.BORDER), 1))
+        painter.setBrush(QColor(theme.CARD_HOVER if chosen else theme.BG))
+        painter.drawRoundedRect(rect.adjusted(1, 1, -1, -3), 9, 9)
+        middle = rect.top() + (rect.height() - 2) / 2
+        lock = QRectF(rect.left() + 14, middle - 2, 10, 8)  # a padlock: its body, and the shackle over it
+        painter.setPen(QPen(QColor(theme.MUTED), 1.4))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawArc(QRectF(lock.left() + 2, lock.top() - 6, 6, 9), 0, 180 * 16)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(theme.MUTED))
+        painter.drawRoundedRect(lock, 2, 2)
+        text = rect.adjusted(32, 0, -12, -2)
+        painter.setPen(QColor(theme.MUTED))
+        painter.drawText(text, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                         QFontMetrics(painter.font()).elidedText(key_title(self.key), Qt.TextElideMode.ElideRight,
+                                                                  int(text.width())))
+
 
 class KeyStrip(QWidget):
-    """The keys that can be given an action, drawn as the keycaps of a keyboard: what each does under its
-    name, the one being edited outlined, the ones the keyboard keeps greyed out."""
+    """The keys that can be given an action, drawn as the keycaps of a keyboard: what each does under its name, the
+    one being edited outlined, those set to something else marked. The keys the keyboard keeps follow, flat, under a
+    caption of their own."""
 
     selected = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._keys = []
-        self._values = {}
+        self._values = {}  # key id -> (what it does, in words; whether that is not its own function)
         self._selected = None
         self.caps = {}  # key id -> KeyCap, in the order of the keys
+        self.kept_label = QLabel(_("Left as they are").upper(), self)  # by the keyboard or another program: see KEY_REASONS
+        self.kept_label.setObjectName("keyGroup")
+        self.kept_label.hide()
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
     def set_keys(self, keys):
+        keys = key_sort(keys)
         ids = [key["id"] for key in keys]
         if ids != list(self.caps):  # other keys: new caps, in the new order (the Tab order follows)
             focused = next((key_id for key_id, cap in self.caps.items() if cap.hasFocus()), None)
@@ -235,18 +338,21 @@ class KeyStrip(QWidget):
                 self.caps[focused].setFocus()
         self._keys = list(keys)
         for key in keys:
-            cap = self.caps[key["id"]]
-            cap.show_key(key, key_value(key, self._values))
-            cap.setChecked(key["id"] == self._selected)
+            self._show(self.caps[key["id"]], key)
+            self.caps[key["id"]].setChecked(key["id"] == self._selected)
         self._place()
         self.updateGeometry()
         self.update()
 
-    def set_value(self, key_id, text):
-        self._values[key_id] = text
+    def _show(self, cap, key):
+        value, changed = self._values.get(key["id"], ("", False))
+        cap.show_key(key, key_value(key, {key["id"]: value}), changed and not key_kept(key))
+
+    def set_value(self, key_id, text, changed=False):
+        self._values[key_id] = (text, changed)
         cap = self.caps.get(key_id)
         if cap is not None:
-            cap.show_key(cap.key, key_value(cap.key, self._values))
+            self._show(cap, cap.key)
 
     def select(self, key_id):
         self._selected = key_id
@@ -255,38 +361,65 @@ class KeyStrip(QWidget):
             cap.setChecked(True)
         self.selected.emit(key_id)
 
-    def _columns(self, width):
-        return max(1, int((width - 2 * PAD + CAP_GAP) // (CAP_W + CAP_GAP)))
+    @staticmethod
+    def _grid(count, width, least):
+        """Columns and the width of one cap, for ``count`` caps of at least ``least`` px across ``width``."""
+        columns = max(1, min(count or 1, int((width - 2 * PAD + CAP_GAP) // (least + CAP_GAP))))
+        return columns, max(least, (width - 2 * PAD - (columns - 1) * CAP_GAP) / columns)
 
-    def _height(self, width):
-        rows = -(-len(self._keys) // self._columns(width)) if self._keys else 0
-        return 2 * PAD + 14 + rows * (CAP_H + CAP_GAP)
+    def _groups(self):
+        changeable = [key for key in self._keys if not key_kept(key)]
+        return changeable, self._keys[len(changeable):]
+
+    def _layout(self, width):
+        """Where each cap goes, as (key id, rect), and the height all of it takes."""
+        changeable, kept = self._groups()
+        places, top = [], PAD + RIM
+        for keys, least, height in ((changeable, CAP_MIN_W, CAP_H), (kept, KEPT_MIN_W, KEPT_H)):
+            if not keys:
+                continue
+            if keys is kept:
+                top += (GROUP_H if changeable else 0)
+            columns, cap = self._grid(len(keys), width, least)
+            for index, key in enumerate(keys):
+                row, column = divmod(index, columns)
+                places.append((key["id"], QRectF(PAD + column * (cap + CAP_GAP), top + row * (height + CAP_GAP), cap, height)))
+            top += -(-len(keys) // columns) * (height + CAP_GAP)
+        return places, top - CAP_GAP + PAD if places else 2 * PAD + RIM
 
     def _place(self):
-        columns = self._columns(self.width())
-        for index, cap in enumerate(self.caps.values()):
-            row, column = divmod(index, columns)
-            cap.move(PAD + column * (CAP_W + CAP_GAP), PAD + 14 + row * (CAP_H + CAP_GAP))
+        places, _height = self._layout(self.width())
+        for key_id, rect in places:
+            self.caps[key_id].setGeometry(rect.toRect())
+        changeable, kept = self._groups()
+        self.kept_label.setVisible(bool(changeable and kept))
+        if changeable and kept:
+            first = self.caps[kept[0]["id"]].geometry()
+            self.kept_label.setGeometry(PAD + 2, first.top() - GROUP_H + 6, self.width() - 2 * PAD, GROUP_H - 10)
 
     def hasHeightForWidth(self):
         return True
 
     def heightForWidth(self, width):
-        return self._height(width)
+        return int(self._layout(width)[1])
 
     def sizeHint(self):
-        return QSize(4 * (CAP_W + CAP_GAP) + 2 * PAD, self._height(4 * (CAP_W + CAP_GAP) + 2 * PAD))
+        width = 4 * (CAP_MIN_W + CAP_GAP) + 2 * PAD
+        return QSize(width, self.heightForWidth(width))
+
+    def minimumSizeHint(self):
+        return QSize(CAP_MIN_W + 2 * PAD, 0)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.setMinimumHeight(self._height(self.width()))
+        self.setMinimumHeight(self.heightForWidth(self.width()))
         self._place()
 
     def paintEvent(self, _event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         width = self.width()
-        body = QRectF(0.5, 0.5, width - 1, self._height(width) - 1)
+        body = QRectF(0.5, 0.5, width - 1, self.heightForWidth(width) - 1)
         # the case: a slab with a raised rim along its top edge, as on a low-profile keyboard
         painter.setPen(QPen(QColor(theme.MODEL_EDGE), 1.2))
         painter.setBrush(QColor(theme.MODEL_BASE))
@@ -348,7 +481,13 @@ class KeysPage(QWidget):
         holder = QWidget()
         inner = QVBoxLayout(holder)
         inner.setContentsMargins(0, 0, 0, 0)
+        inner.setSpacing(10)
         inner.addWidget(self.strip)
+        self.restore = QPushButton(_("Restore keyboard defaults"))
+        self.restore.setObjectName("flat")
+        self.restore.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.restore.clicked.connect(lambda: confirm_restore(self, self.store))
+        inner.addWidget(self.restore, 0, Qt.AlignmentFlag.AlignRight)
         inner.addStretch(1)
         area.setWidget(holder)
         left.addWidget(area, 1)
@@ -356,7 +495,7 @@ class KeysPage(QWidget):
         left.addWidget(self.empty)
         layout.addLayout(left, 1)
 
-        self.picker = ActionPicker(allow_button_actions=True, exclude=KEYBOARD_EXCLUDE)
+        self.picker = ActionPicker(allow_button_actions=True, exclude=KEYBOARD_EXCLUDE, titles=KEYBOARD_TITLES)
         layout.addWidget(self.picker)
 
         self.strip.selected.connect(self._select)
@@ -470,7 +609,8 @@ class KeysPage(QWidget):
     def _refresh(self):
         keys = keyboard.effective_keys(self.store.cfg["keyboard"], self._app)
         for key in self._keys:
-            self.strip.set_value(key["id"], actions.describe(keys.get(key["id"], actions.DEFAULT)))
+            action = keys.get(key["id"], actions.DEFAULT)
+            self.strip.set_value(key["id"], actions.describe(action), action != actions.DEFAULT)
 
     def _state(self, state):
         found = state.get("keyboard") or {}
@@ -479,15 +619,44 @@ class KeysPage(QWidget):
         self.notice.setVisible(bool(notice))
         self.notice.setText(notice)
         self.empty.setVisible(not keys)
+        self.restore.setVisible(bool(keys))
         if keys != self._keys:
             self._keys = keys
             self.strip.set_keys(keys)
             self._refresh()
-            chosen = self._key["id"] if self._key else None
-            ids = [key["id"] for key in keys]
-            if ids:
-                self.strip.select(chosen if chosen in ids else next(
-                    (key["id"] for key in keys if not key["protected"]), ids[0]))
+            chosen = first_key(keys, self._key["id"] if self._key else None)
+            if chosen is not None:
+                self.strip.select(chosen)
+
+
+class ChannelTile(QFrame):
+    """One Easy-Switch channel: its number, the computer on it, and whether that is this one. Only shown: the
+    keyboard's own Easy-Switch keys move it between channels."""
+
+    def __init__(self, index, host, current, parent=None):
+        super().__init__(parent)
+        self.setObjectName("channelCurrent" if current else "channel")
+        self.setMinimumHeight(58)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(12)
+        number = QLabel(str(index + 1))
+        number.setObjectName("channelNumberCurrent" if current else "channelNumber")
+        number.setFixedSize(26, 26)
+        number.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(number)
+        text = QVBoxLayout()
+        text.setSpacing(0)
+        self.name = QLabel(host["name"] or (_("Paired") if host["paired"] else _("Empty")))
+        self.name.setObjectName("channelName" if host["name"] or current else "rowHint")
+        text.addWidget(self.name)
+        if current:
+            caption = QLabel(_("This computer"))
+            caption.setObjectName("rowHint")
+            text.addWidget(caption)
+        layout.addLayout(text, 1)
+        self.setAccessibleName(_("Channel {}: {}").format(index + 1, self.name.text())
+                               + (" · " + _("This computer") if current else ""))
 
 
 class KeyboardPage(ScrollPage):
@@ -500,10 +669,20 @@ class KeyboardPage(ScrollPage):
         self.notice.hide()
         self.body.addWidget(self.notice)
 
-        card = Card(_("Status"))
+        card = Card()  # which keyboard, and how it is: its name, battery and firmware at a glance
+        self.name = QLabel()
+        self.name.setObjectName("heroName")
+        card.add_plain(self.name)
+        status = QWidget()
+        line = QHBoxLayout(status)
+        line.setContentsMargins(0, 0, 0, 0)
+        line.setSpacing(8)
+        self.battery_icon = BatteryIcon()
+        line.addWidget(self.battery_icon)
         self.battery = QLabel()
-        self.battery.setObjectName("valueLabel")
-        card.add(Row(_("Battery"), None, self.battery))
+        self.battery.setObjectName("deviceStatus")
+        line.addWidget(self.battery, 1)
+        card.add_plain(status)
         self.body.addWidget(card)
 
         card = Card(_("Easy-Switch"), hint=_(
@@ -518,7 +697,9 @@ class KeyboardPage(ScrollPage):
         self._hosts_shown = None
         self.body.addWidget(card)
 
-        card = Card(_("Keyboard settings"), hint=_(
+        self.backlight_card = Card(_("Backlight"), hint=_(BACKLIGHT_HINT))
+        self.body.addWidget(self.backlight_card)
+        card = Card(_("Typing"), hint=_(
             "Settings the keyboard controls itself. Changes are made on the keyboard. Its own shortcuts may change "
             "them too."))
         self.fn_switch = Switch()
@@ -538,7 +719,8 @@ class KeyboardPage(ScrollPage):
                     "locks": self.lock_notices}
         self.settings_rows, self.disable_switches, self.disable_rows = {}, {}, {}
         for name, (title, text) in SETTINGS.items():
-            self.settings_rows[name] = card.add(Row(_(title), None, controls.get(name), note=_(text)))
+            home = self.backlight_card if name == "backlight" else card
+            self.settings_rows[name] = home.add(Row(_(title), None, controls.get(name), note=_(text)))
             if name == "fn":  # its notice, a setting of this program's, under it
                 notice = _("Show a notice when Fn lock changes on the keyboard")
                 self.fn_notices = Switch()
@@ -552,19 +734,16 @@ class KeyboardPage(ScrollPage):
                     switch.toggled.connect(lambda on, key=key: self.store.engine.set_keyboard_setting("disable", {key: on}))
                     self.disable_rows[key] = card.add(Row(_(label), None, switch))
             if name == "backlight":
-                self._add_backlight(card)
+                self._add_backlight(self.backlight_card)
         self.settings_rows["platform"].title.setBuddy(self.platform_box)
         self.settings_card = card
         self.body.addWidget(card)
 
-        card = Card(_("Firmware"))
+        card = Card(_("Firmware & reset"))
         self.firmware_row = card.add(Row(_("Firmware"), None, None, note=" "))
         self.firmware = FirmwareQuery(self)
         self.firmware.answered.connect(self._firmware_answered)
         self._firmware_entries, self._firmware_for = [], None
-        self.body.addWidget(card)
-
-        card = Card(_("Keys"))
         reset = QPushButton(_("Restore keyboard defaults"))
         reset.setCursor(Qt.CursorShape.PointingHandCursor)
         reset.clicked.connect(self._reset)
@@ -615,6 +794,11 @@ class KeyboardPage(ScrollPage):
         self.notices.setAccessibleName(title)
         self.notices.toggled.connect(lambda on: self.store.set("keyboard", "notices", on))
         self.backlight_rows["notices"] = card.add(Row(title, None, self.notices))
+
+    def _row_visible(self, row, shown):
+        """Show or hide a row of the Backlight or the Typing card, in whichever it is."""
+        card = self.backlight_card if row in self.backlight_card._rows else self.settings_card
+        card.set_row_visible(row, shown)
 
     def _backlight(self):
         return ((self.store.state.get("keyboard") or {}).get("controls") or {}).get("backlight") or {}
@@ -671,7 +855,7 @@ class KeyboardPage(ScrollPage):
         keys = (control or {}).get("keys") or []
         off = (control or {}).get("value") or []
         for key, switch in self.disable_switches.items():
-            self.settings_card.set_row_visible(self.disable_rows[key], shown and key in keys)
+            self._row_visible(self.disable_rows[key], shown and key in keys)
             if control is None:
                 continue
             if not control.get("busy"):
@@ -699,7 +883,7 @@ class KeyboardPage(ScrollPage):
         self._show_note("backlight", control, BACKLIGHT_HINT, _(BACKLIGHT_NOTES[note]) if note else "")
         for key, row in self.backlight_rows.items():
             here = key in fields if key != "notices" else bool(value) and ("level" in fields or levels is not None)
-            self.settings_card.set_row_visible(row, shown and here)
+            self._row_visible(row, shown and here)
         if control is None:
             return
         self.notices.set_checked_silently(self.store.cfg["keyboard"].get("notices") is True)
@@ -799,10 +983,7 @@ class KeyboardPage(ScrollPage):
             self._ask_firmware()
 
     def _reset(self):
-        answer = QMessageBox.question(self, APP_NAME, _(
-            "Give every key of the keyboard back its own function, in every app? The keys set for single apps go too."))
-        if answer == QMessageBox.StandardButton.Yes:
-            self.store.restore_keyboard()
+        confirm_restore(self, self.store)
 
     def _state(self, state):
         found = state.get("keyboard") or {}
@@ -812,16 +993,21 @@ class KeyboardPage(ScrollPage):
         self.notice.setText(notice)
         settings = found.get("settings") or []
         for name, row in self.settings_rows.items():
-            self.settings_card.set_row_visible(row, name in settings)
-        self.settings_card.setVisible(any(name in SETTINGS for name in settings))
+            self._row_visible(row, name in settings)
+        self.backlight_card.setVisible("backlight" in settings)
+        self.settings_card.setVisible(any(name in SETTINGS and name != "backlight" for name in settings))
         controls = (found.get("controls") or {}) if connected else {}
         self._show_fn(controls.get("fn"))
-        self.settings_card.set_row_visible(self.fn_notices_row, "fn" in settings and controls.get("fn") is not None)
+        self._row_visible(self.fn_notices_row, "fn" in settings and controls.get("fn") is not None)
         self._show_notice_switches()
         self._show_disable(controls.get("disable"), "disable" in settings)
         self._show_backlight(controls.get("backlight"), "backlight" in settings, bool(found.get("reason")))
         self._show_platform(controls.get("platform"), bool(found.get("reason")))
         battery = found.get("battery") if connected else None
+        self.name.setText(found.get("name") or _("Keyboard"))
+        self.battery_icon.set_level(*(battery[0], battery[1] in CHARGING or battery[1] == device.BATTERY_FULL)
+                                    if battery else (None, False))
+        self.battery_icon.setVisible(bool(battery))
         self.battery.setText(battery_text(battery) if battery else _("Connected") if connected else _("Not connected"))
         hosts = found.get("hosts") or []
         self.hosts_card.setVisible(bool(hosts))
@@ -833,13 +1019,7 @@ class KeyboardPage(ScrollPage):
                 if item.widget():
                     item.widget().deleteLater()
             for index, host in enumerate(hosts):
-                name = host["name"] or (_("Paired") if host["paired"] else _("Empty"))
-                chip = QPushButton(f"{index + 1}  ·  {name}")
-                chip.setMinimumHeight(40)
-                chip.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-                if index == found.get("current_host"):
-                    chip.setObjectName("primary")
-                self.hosts_layout.addWidget(chip, 1)
+                self.hosts_layout.addWidget(ChannelTile(index, host, index == found.get("current_host")), 1)
         if found.get("name") != self._firmware_for:
             self._firmware_entries = []  # fwupd's answer about another keyboard
         if self.isVisible() and connected and self._firmware_for != found.get("name"):

@@ -238,7 +238,8 @@ class KeyChooser(unittest.TestCase):
                                                        "battery": None, "current_host": 0, "hosts": [], "keys": keys,
                                                        "reason": None, "failed": None}))
         caps = page.strip.caps
-        self.assertEqual([cap.accessibleName() for cap in caps.values()], ["Easy-Switch 1", "Key 0x0f01", "Key 0x0f02"])
+        # the keys that can be changed first, then the ones the keyboard keeps (the Tab order follows)
+        self.assertEqual([cap.accessibleName() for cap in caps.values()], ["Key 0x0f01", "Key 0x0f02", "Easy-Switch 1"])
         self.assertEqual(caps["0x00d1"].accessibleDescription(), "Kept by the keyboard")
         self.assertTrue(all(cap.focusPolicy() & Qt.FocusPolicy.TabFocus for cap in caps.values()))
         self.assertTrue(caps["0x0f01"].isChecked())  # the first key that can be changed, to begin with
@@ -246,14 +247,16 @@ class KeyChooser(unittest.TestCase):
         QTest.keyClick(caps["0x0f01"], Qt.Key.Key_Right)
         self.assertTrue(caps["0x0f02"].hasFocus())
         self.assertTrue(caps["0x0f02"].isChecked())
+        self.assertFalse(caps["0x0f01"].isChecked())  # one key at a time
         self.assertEqual(page._key["id"], "0x0f02")
         page.picker.changed.emit(actions.keys("LEFTCTRL", "V"))
         self.assertEqual(store.cfg["keyboard"]["keys"], {"0x0f02": actions.keys("LEFTCTRL", "V")})
         self.assertEqual(caps["0x0f02"].accessibleDescription(), actions.describe(actions.keys("LEFTCTRL", "V")))
         QTest.keyClick(caps["0x0f02"], Qt.Key.Key_Left)
-        QTest.keyClick(caps["0x0f01"], Qt.Key.Key_Left)
+        QTest.keyClick(caps["0x0f01"], Qt.Key.Key_Down)
         self.assertEqual(page._key["id"], "0x00d1")  # a key the keyboard keeps is reached too, and says so
-        QTest.keyClick(caps["0x00d1"], Qt.Key.Key_Right)
+        self.assertTrue(caps["0x00d1"].hasFocus())
+        QTest.keyClick(caps["0x00d1"], Qt.Key.Key_Up)
         QTest.keyClick(caps["0x0f01"], Qt.Key.Key_Space)
         self.assertEqual(page._key["id"], "0x0f01")
 

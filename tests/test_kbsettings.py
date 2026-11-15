@@ -3587,7 +3587,7 @@ class BacklightPage(unittest.TestCase):
                  "Keyboard backlight: level {level} of {top}"]
         for text in words:
             self.assertIn(text, i18n_uk.STRINGS)
-        for text in words + ["Backlight", "Keyboard settings"]:  # no protocol words in what is shown
+        for text in words + ["Backlight", "Typing"]:  # no protocol words in what is shown
             self.assertNotRegex(text + i18n_uk.STRINGS[text], r"0x|1982|\bV\d|\bbit|\bunits?\b|\bbyte")
 
     def test_the_notice_switch_is_a_setting_of_this_program_only(self):

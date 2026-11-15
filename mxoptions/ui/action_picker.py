@@ -65,7 +65,8 @@ class ActionList(QWidget):
 
     picked = Signal(object)
 
-    def __init__(self, exclude=frozenset(), parent=None):
+    def __init__(self, exclude=frozenset(), titles=None, parent=None):
+        """``titles``: category id -> heading, in place of the catalogue's (a keyboard's "Mouse" is "General")."""
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -104,7 +105,7 @@ class ActionList(QWidget):
             if not presets:
                 continue
             rows = []
-            label = self._category(_(title))
+            label = self._category(_((titles or {}).get(category, title)))
             for preset in presets:
                 row = self._row(_(preset.label), preset.icon)
                 row.clicked.connect(lambda _checked=False, p=preset: self.picked.emit(copy.deepcopy(p.action)))
@@ -271,8 +272,8 @@ class ActionPicker(QFrame):
 
     changed = Signal(object)
 
-    def __init__(self, allow_button_actions=True, exclude=None, parent=None):
-        """``exclude``: catalogue ids not to offer (what a keyboard key cannot do)."""
+    def __init__(self, allow_button_actions=True, exclude=None, titles=None, parent=None):
+        """``exclude``: catalogue ids not to offer (what a keyboard key cannot do); ``titles``: see ActionList."""
         super().__init__(parent)
         self.setObjectName("picker")
         self.setFixedWidth(int(320 * ui_scale()))
@@ -383,7 +384,8 @@ class ActionPicker(QFrame):
             "shows the screen as it was when you pressed, and not on Wayland desktops.")))
         layout.addWidget(self.spotlight_block)
 
-        self.list = ActionList(exclude=(frozenset() if allow_button_actions else actions.BUTTON_ONLY) | frozenset(exclude or ()))
+        self.list = ActionList(exclude=(frozenset() if allow_button_actions else actions.BUTTON_ONLY) | frozenset(exclude or ()),
+                               titles=titles)
         self.list.picked.connect(self._picked)
         layout.addWidget(self.list, 1)
         self.stack.addWidget(main)

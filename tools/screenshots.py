@@ -40,14 +40,14 @@ STATE = {
     },
 }
 
-# A made-up keyboard for --keyboard: its keys are named by control ids invented for the picture, apart from the
-# Easy-Switch keys and Fn, which the keyboard keeps.
+# A made-up keyboard for --keyboard, with the control ids of a real MX keyboard's top row; it keeps the Easy-Switch
+# keys and Fn.
 KEYBOARD = {
     "connected": True, "known": True, "name": "MX Mechanical", "battery": (64, 0), "current_host": 0,
     "hosts": [{"paired": True, "name": "workstation"}, {"paired": True, "name": "laptop"}, {"paired": False, "name": ""}],
     "keys": [{"id": f"0x{cid:04x}", "cid": cid, "tid": cid, "protected": cid in (0x00D1, 0x00D2, 0x00D3, 0x0034),
-              "active": cid in (0x0f01, 0x0f02, 0x0f05), "native_reason": "protected" if cid in (0x00D1, 0x00D2, 0x00D3, 0x0034) else None}
-             for cid in (0x00D1, 0x00D2, 0x00D3, 0x0034, 0x00E2, 0x00E3, 0x0f01, 0x0f02, 0x0f03, 0x0f04, 0x0f05, 0x0f06)],
+              "active": cid in (0x00E0, 0x010A, 0x00E5), "native_reason": "protected" if cid in (0x00D1, 0x00D2, 0x00D3, 0x0034) else None}
+             for cid in (0x00D1, 0x00D2, 0x00D3, 0x0034, 0x00C7, 0x00C8, 0x00E0, 0x0103, 0x0108, 0x010A, 0x011C, 0x00E5)],
     "reason": None, "firmware": "12.3.45", "settings": ["fn", "backlight", "platform", "disable", "locks"],
     "controls": {
         "disable": {"value": ["insert"], "keys": ["caps_lock", "num_lock", "scroll_lock", "insert", "super"],
@@ -62,8 +62,8 @@ KEYBOARD = {
                       "writable": True, "busy": False, "outcome": None},
     },
 }
-KEYBOARD_KEYS = {"0x0f01": {"type": "keys", "keys": ["KEY_LEFTCTRL", "KEY_C"]}, "0x0f02": {"type": "keys", "keys": ["KEY_LEFTCTRL", "KEY_V"]},
-                 "0x0f05": {"type": "host", "host": 1}}
+KEYBOARD_KEYS = {"0x00e0": {"type": "keys", "keys": ["KEY_LEFTCTRL", "KEY_C"]}, "0x010a": {"type": "keys", "keys": ["KEY_LEFTCTRL", "KEY_V"]},
+                 "0x00e5": {"type": "host", "host": 1}}
 
 
 class StandInEngine:
