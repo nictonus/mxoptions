@@ -221,6 +221,7 @@ QSpinBox::up-button, QSpinBox::down-button {{ width: 0; border: none; }}
 QComboBox {{ background: {CARD_HOVER}; border: 1px solid {BORDER}; border-radius: 9px; padding: 6px 12px; min-width: 150px; }}
 QComboBox:hover {{ border-color: {ACCENT_DIM}; }}
 QComboBox::drop-down {{ border: none; width: 22px; }}
+QComboBox#appChoice {{ min-width: 0; }}
 QComboBox QAbstractItemView {{
     background: {CARD}; border: 1px solid {BORDER}; selection-background-color: {ACCENT_DIM};
     selection-color: {TEXT}; padding: 4px; outline: none;

@@ -10,7 +10,7 @@ import threading
 import time
 
 from . import keys, windows
-from .vinput import MOUSE_BUTTONS
+from .vinput import MOUSE_BUTTONS, Holds
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 
@@ -68,38 +68,42 @@ def _key(name, down):
 class VirtualInput:
     def __init__(self):
         self._lock = threading.Lock()
-        self._held = set()
+        self._holds = Holds(self._key)
         _send(_INPUT(INPUT_MOUSE, _UNION(mi=_MOUSEINPUT(0, 0, 0, MOUSE_MOVE, 0, MARK))))  # a move by nothing: can anything be sent?
 
     def close(self):
         self.release_all()
 
-    def _set(self, names, down):
+    @staticmethod
+    def _key(name, down):
+        made = _key(name, down)
+        if made is not None:
+            _send(made)
+
+    @staticmethod
+    def _held_keys(names, down):
+        """``names`` without the ones Windows has no key for, which are done here and now instead: brightness
+        is told to the screens directly, on the way down only, so nobody holds it."""
+        kept = []
         for name in names:
-            if name in BRIGHTNESS:  # Windows has no key for it: the screens are told directly
+            if name in BRIGHTNESS:
                 if down:
                     windows.brightness.change(BRIGHTNESS[name])
-                continue
-            made = _key(name, down)
-            if made is None:
-                continue
-            _send(made)
-            (self._held.add if down else self._held.discard)(name)
+            else:
+                kept.append(name)
+        return kept
 
-    def press(self, names):
+    def press(self, names, owner="mouse"):
         with self._lock:
-            self._set(list(names), True)
+            self._holds.press(self._held_keys(names, True), owner)
 
-    def release(self, names):
+    def release(self, names, owner="mouse"):
         with self._lock:
-            self._set(list(reversed(list(names))), False)
+            self._holds.release(self._held_keys(names, False), owner)
 
     def tap(self, names):
-        names = list(names)
         with self._lock:
-            self._set(names, True)
-            time.sleep(0.012)
-            self._set(list(reversed(names)), False)
+            self._holds.tap(self._held_keys(names, True))
 
     def type_ascii(self, text):
         """Type text. Windows takes characters as such, so this is right on every layout and for every script."""
@@ -108,20 +112,16 @@ class VirtualInput:
             for index in range(0, len(units), 2):
                 unit = int.from_bytes(units[index:index + 2], "little")
                 if unit == 0x0A:  # a new line is the Enter key, not a character
-                    self._set(["KEY_ENTER"], True)
-                    self._set(["KEY_ENTER"], False)
+                    self._holds.tap(["KEY_ENTER"], wait=0)
                 else:
                     _send(_INPUT(INPUT_KEYBOARD, _UNION(ki=_KEYBDINPUT(0, unit, KEY_UNICODE, 0, MARK))),
                           _INPUT(INPUT_KEYBOARD, _UNION(ki=_KEYBDINPUT(0, unit, KEY_UNICODE | KEY_UP, 0, MARK))))
                 time.sleep(0.002)
 
-    def release_all(self):
+    def release_all(self, owner=None):
+        """Let go of the keys and buttons ``owner`` holds, or with None of everything."""
         with self._lock:
-            if self._held:
-                try:
-                    self._set(list(self._held), False)
-                except OSError:
-                    pass
+            self._holds.release_all(owner)
 
     def scroll(self, delta):
         """Vertical scroll in hi-res units (120 = one detent, positive = up)."""

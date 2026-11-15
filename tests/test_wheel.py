@@ -1,6 +1,7 @@
 import unittest
+from unittest import mock
 
-from tests.support import Clock, make_engine, names
+from tests.support import Actions, Clock, FakeInput, make_engine, names
 from mxoptions import engine as engine_module
 
 
@@ -19,6 +20,64 @@ def stop(engine, clock, pause=0.2):
 def modes(engine):
     """(mode, silent) for every change the engine announced."""
     return [payload for kind, payload in engine.listener.events if kind == "wheel_mode"]
+
+
+CTRL = "KEY_LEFTCTRL"
+
+
+class ScrollInput(FakeInput):
+    """Virtual input keeping scrolls in same ordered list as keys. ``fail``: scrolls that raise first, as uinput
+    write can."""
+
+    def __init__(self):
+        super().__init__()
+        self.fail = 0
+
+    def scroll(self, delta):
+        if self.fail:
+            self.fail -= 1
+            raise OSError(5, "synthetic write error")
+        self.sent.append(("scroll", delta))
+
+
+class FailingActions(Actions):
+    """``fail``: triggers that raise first, as running an action can."""
+
+    def __init__(self):
+        super().__init__()
+        self.fail = 0
+
+    def trigger(self, action):
+        if self.fail:
+            self.fail -= 1
+            raise OSError(5, "synthetic")
+        super().trigger(action)
+
+
+def thumb_engine(test, **thumbwheel):
+    """Engine with ScrollInput and FailingActions. Clock stands in for time until test ends; sleeps counted, never
+    waited: each moves clock on by its length. Returns (engine, clock, sleeps)."""
+    clock = Clock()
+    clock.__enter__()
+    test.addCleanup(clock.__exit__)
+    sleeps = []
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        clock.now += seconds
+
+    patcher = mock.patch.object(engine_module.time, "sleep", side_effect=sleep)
+    patcher.start()
+    test.addCleanup(patcher.stop)
+    engine, _ = make_engine(thumbwheel=thumbwheel)
+    engine.vinput, engine.executor = ScrollInput(), FailingActions()
+    engine._sync_watcher = lambda: None
+    return engine, clock, sleeps
+
+
+def dispatched(engine, function):
+    """Steps sent: Ctrl presses for zoom, actions run for the others."""
+    return engine.vinput.sent.count((CTRL, True)) if function == "zoom" else len(engine.executor.ran)
 
 
 class SmartShift(unittest.TestCase):
@@ -131,6 +190,54 @@ class ThumbWheel(unittest.TestCase):
         with Clock():
             engine._on_thumbwheel(-6)
         self.assertEqual((turned, engine.executor.ran), ([1.0], []))
+
+    def test_one_huge_thumb_report_steps_a_bounded_number_and_owes_nothing(self):
+        for function in ("zoom", "volume", "brightness", "tabs", "desktops"):
+            for rotation in (-32768, 32767):
+                with self.subTest(function=function, rotation=rotation):
+                    engine, _, sleeps = thumb_engine(self, function=function, speed=4.0)
+                    engine._on_thumbwheel(rotation)
+                    self.assertEqual(dispatched(engine, function), engine_module.THUMB_STEPS_MAX)
+                    self.assertEqual(len(sleeps), 2 * engine_module.THUMB_STEPS_MAX if function == "zoom" else 0)
+                    self.assertLess(abs(engine._thumb["acc"]), engine_module.THUMB_STEPS[function][0])
+                    self.assertEqual(engine.vinput._holds.held(), set())
+                    before = len(sleeps)
+                    engine._handle(("trigger", {"type": "keys", "keys": ["KEY_F9"]}))
+                    self.assertEqual(len(sleeps), before)  # what waited behind it runs next, no step of report left
+
+    def test_ordinary_thumb_reports_step_as_before(self):
+        cases = [("zoom", 1.0, [-6], 1, 120), ("zoom", 4.0, [-6], 4, 120), ("zoom", 4.0, [12], 8, -120),
+                 ("volume", 4.0, [-12], 8, None), ("brightness", 1.0, [6], 1, None), ("tabs", 1.0, [-6, -6, -6], 1, None),
+                 ("tabs", 4.0, [-12], 2, None), ("desktops", 4.0, [-12], 1, None)]
+        for function, speed, reports, expect, delta in cases:
+            with self.subTest(function=function, speed=speed, reports=reports):
+                engine, clock, sleeps = thumb_engine(self, function=function, speed=speed)
+                for rotation in reports:
+                    clock.now += 0.05
+                    engine._on_thumbwheel(rotation)
+                if function == "zoom":
+                    self.assertEqual(engine.vinput.sent, [(CTRL, True), ("scroll", delta), (CTRL, False)] * expect)
+                    self.assertEqual(sleeps, [0.008] * (2 * expect))
+                else:
+                    forward = engine_module.THUMB_STEPS[function][1 if reports[0] < 0 else 2]
+                    self.assertEqual(engine.executor.ran, [forward] * expect)
+
+    def test_a_failed_thumb_step_owes_nothing(self):
+        engine, clock, _ = thumb_engine(self, function="zoom", speed=1.0)
+        engine.vinput.fail = 1
+        with self.assertRaises(OSError):
+            engine._on_thumbwheel(-60)  # 10 steps; the first scroll fails
+        self.assertEqual(engine.vinput._holds.held(), set())
+        clock.now += 0.05
+        engine._on_thumbwheel(-6)
+        self.assertEqual(engine.vinput.sent.count(("scroll", 120)), 1)
+        engine, clock, _ = thumb_engine(self, function="volume", speed=1.0)
+        engine.executor.fail = 1
+        with self.assertRaises(OSError):
+            engine._on_thumbwheel(-60)
+        clock.now += 0.05
+        engine._on_thumbwheel(-6)
+        self.assertEqual(len(engine.executor.ran), 1)
 
 
 class Constants(unittest.TestCase):

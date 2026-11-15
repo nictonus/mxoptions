@@ -31,12 +31,21 @@ service and a D-Bus API for other programs.
 - **Gestures.** Hold a button and swipe in four directions, or tap. A live compass shows how your
   movement is read. You choose when a swipe fires (on release, at once, or repeating as you keep
   moving), the distances in millimetres, a dead zone for diagonals, and a vibration pattern for each
-  moment of a gesture. The same button also reads sixteen shapes drawn with it held (corners,
-  there and back, circles, shakes), each with an action of its own.
+  moment of a gesture. The same button also reads sixteen shapes drawn with it held (corners, there
+  and back, circles, shakes), each with an action of its own. An app you added can give any button
+  gestures of its own on the Buttons page, Pan and Zoom while held included; how swipes are read,
+  the speed and the vibrations stay the same in every app. While you try gestures on the Gestures
+  page, the app in front before MX Options counts, and the compass shows the gestures for all apps.
+  Rotating is not offered.
 - **Actions Ring.** A menu around the cursor, as bubbles, a pie or tiles. Bubbles run actions, open
   their own ring of bubbles (three levels deep), or are *dials* that you turn with the wheel or the
   thumb wheel without closing the menu: volume, tabs, zoom, undo, tracks and more. The cursor stays
   free while the ring is open. Presets are included and your own can be saved.
+- **Spotlight effects.** Hold a button and an effect follows the pointer until you let go:
+  *Highlight* darkens the screen around a clear circle, *Digital Laser* is a coloured dot, and *Still
+  Magnify* enlarges a still picture of the screen taken when you pressed (this program's own kind
+  of magnifier, not a live one). Each has its size and colour; with more than one switched on,
+  double-click and hold for the next. Buttons for all apps only, for now; see [Known limits](#known-limits).
 - **Wheels.** Pointer speed (two speeds and a precision speed), SmartShift and its threshold,
   ratchet force, natural direction, high-resolution scrolling, and what the thumb wheel does. An
   optional click, felt or heard, marks SmartShift letting the wheel go and catching it again.
@@ -45,10 +54,17 @@ service and a D-Bus API for other programs.
 - **Flow.** One mouse on two or three computers: push the pointer past the edge of the screen and
   the mouse carries on on the computer behind it, with the text, pictures and files you copied.
   They are paired with a six-digit code and talk over an encrypted link. See [Flow](#flow).
+- **Keyboard.** A Logitech keyboard that speaks HID++ 2.0 (MX Mechanical, MX Keys and the like) is
+  found next to the mouse, on the same receiver or over Bluetooth, and shows up under it in the
+  sidebar: its programmable keys take the same kinds of actions as the buttons, Easy-Switch from a
+  key moves the keyboard, and its battery, channels and firmware are shown. A key you have not
+  changed is left to the keyboard. Up to 32 apps can have keys of their own, which count while the
+  app is in front (not on GNOME with Wayland, which does not say which app that is). Not tried on a
+  real keyboard yet: see [Known limits](#known-limits).
 - **Also:** Easy-Switch between computers, a tray icon in five styles (plain ones in the colour of
   your panel that show a missing mouse and a low battery, one that fills with the charge), firmware
   versions with an update check through fwupd, four themes with any accent colour, English and
-  Ukrainian.
+  Ukrainian. All settings can be exported to a file and imported again: see [Files](#files).
 - **For other programs:** a [D-Bus API](docs/API.md) to play vibrations, run actions, show a ring of
   their own, change settings, and follow buttons, gestures and the wheel.
 
@@ -93,7 +109,9 @@ each desktop allows:
 |---|---|---|---|---|
 | Ready actions for windows and the desktop | KDE's own shortcuts: all of them | `swaymsg`, `hyprctl`; a launcher, screenshots and a terminal from what is installed (fuzzel, wofi, rofi; grim and slurp) | GNOME's key combinations as it ships them | the usual key combinations (Alt+F4, Ctrl+Alt+arrows, Print, …) |
 | Actions Ring | on a layer above the windows | the same | in a window on the session's X server (XWayland), which takes no focus; a little soft where the display is scaled by a fraction | in a window the window manager leaves alone; as a panel of the ring's size where nothing composites |
+| Spotlight effects | Highlight and Digital Laser, on the layer above the windows | the same | Highlight and Digital Laser, in the XWayland window | all three, where something composites; none where nothing does |
 | Flow: the screen edge | a KWin script | a see-through line one pixel wide along the edge | not possible: use the *Move to the other computer (Flow)* action | the pointer's position is asked for |
+| Haptics: a tick on switching screens | the same KWin script | not possible | not possible | the pointer's position is asked for |
 | Flow: what was copied | KGuiAddons, else wl-clipboard | the same | wl-clipboard | Qt itself |
 
 An action a desktop has no way of doing is not offered there, and settings made on KDE keep working:
@@ -168,8 +186,8 @@ standing in for a game: what that sent to the controller's motors through XInput
 mouse. No game itself was tried.
 
 Used by hand on Windows: the buttons, gestures, the wheels, the Actions Ring, and crossing at the screen
-edge to a Linux computer and back. Not tried: the Bolt receiver (written, never plugged in there), and
-game rumble in a game itself.
+edge to a Linux computer and back. Not tried: the Bolt receiver (written, never plugged in there), the
+tick on switching screens, and game rumble in a game itself.
 Not there yet: letting Flow be found by other computers (Windows' firewall asks about that; the
 Windows side calls the other computer itself, which needs no permission).
 
@@ -373,11 +391,22 @@ What can be tuned there:
 - **Keep the corners free:** the share of the edge, at each end, that does not lead across, so that
   hot corners keep working.
 - **Full-screen windows:** by default a game or a film in full screen keeps the mouse.
+- **Only while Ctrl is held:** off by default. On, the edge sends the mouse across only while
+  either Ctrl key is held; the action *Move to the other computer (Flow)* and the Easy-Switch
+  buttons do not need it. Works on X11 and Windows (Windows written from Microsoft's
+  documentation, not yet tried on a Windows computer). A Wayland desktop does not tell a program
+  in the background whether Ctrl is held, so there the edge keeps the mouse while it is on; the
+  action still works. Older versions of MX Options ignore it and cross without Ctrl.
 - **What goes along:** text and pictures, files and folders, and the largest amount to send in one
   go. Files are sent when you cross and wait in `~/.cache/mxoptions/flow-files` for a day. The
   clipboard of the computer you arrive on is left as it is until all of them are there; then they
   take it over, and the mouse gives a vibration of your choice (another one if they could not be
   brought over). The Flow page shows how far a transfer is and can cancel it.
+- **Pausing one computer:** the switch next to *Forget* takes a paired computer out of Flow for a
+  while and keeps the pairing and its place. Paused, the link to it is down: the mouse does not
+  cross to it or back, nothing copied goes along, the keyboard does not follow, and files on their
+  way stop. A switch already under way when you pause still finishes. The Easy-Switch buttons still
+  reach it. Switch it on to resume. The other computer sees it as not connected.
 
 How it works, and how it is kept private:
 
@@ -405,8 +434,35 @@ How long crossing takes is mostly the mouse changing its radio channel: about ha
 computer with a Bolt receiver, one to two seconds to one on Bluetooth. Flow links computers that
 run MX Options; it does not talk to Logi Options+ on Windows or macOS.
 
-A keyboard does not follow unless it is switched by other means. For networks where the computers
-cannot find each other, the address and the key can be entered by hand at the bottom of the page.
+**Mouse follows the keyboard** (off by default; the switch shows once a keyboard was found). Press
+the keyboard's own Easy-Switch key for one of the other computers, and once that computer reports
+the keyboard has arrived, the mouse is sent there too. This is MX Options Flow, between computers
+that run MX Options and see the keyboard; it is not Logitech Flow or the Enhanced Easy-Switch of
+Logi Options+, and neither of those is asked. This switch only ever moves the mouse; the one below
+moves the keyboard. The mouse goes only within 10 seconds of the keyboard leaving, once each time it
+leaves, not while a button is held, and not when an action of this app sent the keyboard away. Each
+pairing names the keyboard with a value of its own made from the pairing key; which keyboard it is
+never leaves the computer.
+
+**Keyboard follows the mouse** (off by default; the switch shows once a keyboard was found). Send
+the mouse to one of the other computers, past the edge or with the action, and the keyboard is sent
+there too, to the Easy-Switch channel that computer saw it on. It goes once each time the mouse
+leaves, and only when the keyboard is here, the other computer saw this same keyboard since it
+started and the keyboard is paired there, the keyboard itself says that channel is paired, and no
+key is held down. Whether a key is down is asked of the keyboard just before it goes, through the
+connection the app already has: the answer is reduced to one yes or no at once, and nothing of it
+is kept, logged or sent. Otherwise the keyboard stays, and the log says why ("the keyboard stays";
+see `journalctl --user -u mxoptions`). It is never tried again for that crossing.
+
+It can only start from Linux with the keyboard on Bluetooth (BlueZ). A keyboard on a receiver or a
+cable stays, and so does one that reports anything but keys (letters, media and system keys) and
+its HID++ messages. Windows can receive the keyboard but cannot send it onward automatically: there,
+press the keyboard's Easy-Switch key. The computer the mouse goes to needs this version too, to say
+where the keyboard goes; with an older one the keyboard stays. The keyboard's own Easy-Switch keys
+always work, and switching this off or stopping the app (`systemctl --user stop mxoptions`) stops it.
+
+For networks where the computers cannot find each other, the address and the key can be entered by
+hand at the bottom of the page.
 
 ## Rumble from games
 
@@ -437,10 +493,25 @@ then, and for other mice, it draws its own 3D model.
 | | |
 |---|---|
 | Settings | `~/.config/mxoptions/config.json` |
+| Settings as they were before the last import | `~/.config/mxoptions/config.backup.json` |
+| Keyboard keys the app has changed (to give them back after a crash) | `~/.local/share/mxoptions/keyboard-diverted.json` |
 | Mouse pictures | `~/.local/share/mxoptions/mouse/` |
 | Generated click sounds | `~/.cache/mxoptions/sounds/` |
 | Files that arrived through Flow | `~/.cache/mxoptions/flow-files/` |
 | Tray icon drawings | `~/.local/share/icons/hicolor/scalable/status/mxoptions-tray-*.svg` |
+
+*Device & app → Settings file* exports every setting to a file of up to 1 MB, and imports one. The
+file holds your commands and scripts too, so keep it private; the pairings of Flow (their keys, what
+this computer goes by, its channel) are never in it, and an import keeps the ones this computer has.
+An import first keeps the settings in use, unsaved changes included, in `config.backup.json`, saves
+the new ones, and only then uses them; when it cannot do all of that, it uses none. To go back,
+quit the app and copy `config.backup.json` over `config.json`.
+
+The macro editor exports one macro to a file of its own (*Export…*) and imports one (*Import…*). The
+format is this app's own, not a file of Logitech Options+. An import only fills the editor: nothing
+runs, and nothing is kept until *Save*. A file that is not exactly a macro the editor can show is
+refused whole. The file holds the macro's text and commands as written: keep it private, and import
+only files you trust.
 
 ## Known limits
 
@@ -456,6 +527,21 @@ then, and for other mice, it draws its own 3D model.
   system's firmware updater, for updates. fwupd can flash both the mouse and the Bolt receiver, but
   Logitech has published no firmware for either of them for Linux, so the check finds nothing. The
   app does not flash anything itself.
+- **The mouse following the keyboard was not tried on real devices.** Only tests with made-up
+  computers and keyboards cover it. If the other computer reports the keyboard before this one
+  notices it has gone, the mouse stays; how often that happens is not known yet.
+- **The keyboard following the mouse was not tried on a real keyboard.** Only tests with made-up
+  keyboards and computers cover it; whether a real keyboard reports a key held down correctly over
+  Bluetooth is not known yet. A key pressed in the very moment the keyboard switches can stay down
+  on the computer it left, repeating, until the keyboard is back there or the key is pressed again.
+  If the keyboard was paired anew since the other computer last saw it, it can land on a third
+  computer; its Easy-Switch key brings it back. Each check reads the keyboard over Bluetooth, and
+  bluetoothd keeps a copy of every read (about 8.5 KiB each) while the keyboard stays connected and
+  replays them when it reconnects: so the app reads a keyboard at most 32 times each time it opens
+  it, and starts counting again after a restart. With `UserspaceHID=persist` in
+  `/etc/bluetooth/input.conf` those copies outlast disconnects until bluetoothd restarts. While a
+  check waits for the keyboard's answer, other programs opening or closing a HID device may wait
+  too, rarely up to 5 seconds.
 - **Flow with three computers was never run on three.** It was written with two at hand: the
   tests put three copies of the program on one machine and cross between them, but no third
   computer has received the mouse.
@@ -468,6 +554,90 @@ then, and for other mice, it draws its own 3D model.
   are passed on.
 - **Checked on one mouse.** Everything was tried on a single MX Master 4. Synthetic tests cover the
   logic; the feel of gestures, vibrations and sounds was judged by one person.
+- **The keyboard has not been tried on a keyboard.** That part was written from Logitech's published
+  description of the protocol and is covered by tests with made-up devices only. What a real
+  keyboard does with a diverted key after a crash, a power cycle or an Easy-Switch to a computer
+  without MX Options has not been seen; until it has, treat the keyboard side as a preview.
+- **One keyboard at a time.** A second one is ignored while the first is there.
+- **Keys for single apps were not tried on a desktop.** Which app is in front is heard from KWin
+  on KDE Plasma, from `swaymsg` on sway, from Hyprland's event socket, from the X server elsewhere
+  on X11 (twice a second) and from Windows (twice a second); only tests with made-up desktops cover
+  that. GNOME on Wayland does not say, so there the keys do what is set for all apps. The app is
+  known by its window class (its program file on Windows), so two windows of one program share its
+  keys, and a Hyprland class with a comma in it cannot be told. A key that changes when another app
+  comes to the front lets go at once and its macros stop before their next step; a command one of
+  them started keeps running. To add an app, switch to it, then come back to the Keys page.
+- **Some keys stay the keyboard's.** The Easy-Switch keys and the keys of the Fn layer are never
+  taken over, and the Fn mode, the backlight and the other settings of the keyboard itself are not
+  offered yet. The Keyboard page lists the ones the keyboard says it has, in general words: that it
+  has one does not say which keys or values it uses, and the app changes none of them.
+- **The keyboard's firmware version is read from the keyboard** where fwupd does not show it, after
+  its keys are set up. How it compares with the version Logitech's own software shows has not been
+  checked on a real keyboard.
+- **Changed keys go back when the app quits.** A key is changed with the keyboard's temporary
+  setting, never the one it keeps for good. The app notes each key before it changes it, in the file listed
+  under [Files](#files), and after a crash gives back what it finds still changed the next time it
+  starts. Keys another program changed are left alone, and while Logi Options+, Solaar or logiops
+  is running no key is touched at all. If that file cannot be read, nothing is touched either:
+  move it away, and if a key then stays dead, switch the keyboard off and on once. An older version of MX Options ignores
+  the keyboard settings and that file; quit this one before going back to it, so the keys are
+  given back first. "Restore defaults" in an older version drops the keyboard settings.
+- **Easy-Switch from a key gives the keys back first.** The keyboard is only sent to the other
+  computer once every key the app changed is back to normal; if one cannot be given back, it stays
+  here with its keys as set, and the Keyboard page says so. The keyboard's own Easy-Switch keys are
+  the keyboard's: when they are used, the app is not asked.
+- **Spotlight effects are a first part.** They are set for a button of all apps, not for a key or
+  in an app profile. While one shows it covers the screen it is on (all screens with XWayland):
+  clicks and scrolling there do nothing until the button comes up, the thumb wheel's scrolling and
+  zooming included; keys and thumb wheel functions that send keys work as usual. Still Magnify shows
+  the screen as it was at the press, kept in memory only (at most 64 MiB) and dropped on release;
+  it is not offered on Wayland, where a program gets no picture of the screen without asking, and
+  live magnifying is not done yet. Without a compositing manager on X11, and on Wayland desktops
+  with neither layer-shell nor XWayland, there are no effects at all. No ring opens while a
+  Spotlight button is held. None of this was tried on a desktop yet: tests with made-up screens and
+  pictures cover it.
+- **Suggested settings for an app are a first part.** On the Buttons page, an app you added can take
+  one of three sets after Logi Options+: *Web browser* (middle, back and forward buttons as the
+  mouse has them, thumb wheel switches tabs), *Spreadsheet* (back Ctrl+Z, forward Ctrl+Y, thumb
+  wheel scrolls sideways) and *Documents and slides* (the same buttons, thumb wheel zooms). A set
+  only changes what the app does as in all apps; a button or function it has of its own stays, and
+  the dialog lists both before you apply. Logi Options+ also makes the middle button pan in the
+  spreadsheet and document apps: these sets leave the middle button as it is (an app's middle button
+  can be given Gestures with Pan by hand), and they leave out its sets for Photoshop, Premiere Pro,
+  Final Cut Pro, Zoom and Teams and its rings for single apps. Nothing is matched by the app's name.
+  Ctrl+Z and Ctrl+Y are key positions: on a layout where Z and Y trade places (German, for one) they
+  trade places too.
+  Two more sets are own choices, not after Logi Options+ (what its Zoom and Teams sets hold is not
+  published): *Zoom meetings* (Linux and Windows: back Alt+A, mute or unmute, forward Alt+V, video
+  on or off, Zoom's default shortcuts in a meeting) and, on Windows only, *Microsoft Teams meetings*
+  (Ctrl+Shift+M and Ctrl+Shift+O of the Teams desktop app; Teams has no desktop app for Linux, and
+  its web app has no video shortcut). They touch the back and forward buttons only. Each press sends the
+  shortcut once, however long the button is held, and only while that app is in front. Like any
+  macro, it waits for a macro still playing; at most four wait and a press past that is dropped, and
+  changing what the button does or the mouse going away drops one still waiting. A shortcut changed
+  in the app no longer matches. Keys are key positions: on French AZERTY Alt+A lands where Q is, and
+  Microsoft lists its shortcuts for the US layout. These are the apps' own mute, not the system's
+  *Mute microphone* (`mic_mute`), which stays a separate action. Not tried with the apps yet.
+  On Windows there are two own sets more, *Photoshop* and *Premiere*. They are partial choices after
+  Windows shortcuts Adobe documents, not the Logi Options+ sets for these apps named above: what
+  those send is not known here, so they stay left out. *Photoshop*: back Ctrl+Z, forward
+  Ctrl+Shift+Z, thumb wheel `]` turning up and `[` turning down, which Adobe names for the brush size
+  of Pattern Stamp and Spot Healing Brush. *Premiere*: the same buttons, thumb wheel Page Down and
+  Page Up: the next and previous screen of the Timeline, a whole screen per step, not smooth
+  scrolling; Adobe says the pointer must be over the Timeline, and its list of shortcuts that the
+  panel must have focus. Adobe makes these apps for Windows and macOS only, so other systems do not
+  offer the two sets; what they set stays ordinary settings of the app everywhere. They give the
+  thumb wheel keystrokes only where the app has none of its own and its thumb wheel sends keystrokes;
+  keystrokes the app has of its own stay, and the dialog names them. Shortcuts changed in the app,
+  another keyboard layout or Photoshop's "Use Legacy Undo Shortcuts" make them do something else.
+  They were not tried with Photoshop or Premiere.
+- **Photoshop actions on the ring (Windows), set up by you.** Photoshop plays a recorded action from
+  a function key you give it. Record the action in its Actions panel (Layer > New Adjustment Layer >
+  Brightness/Contrast, say), give it a Function Key such as Ctrl+Shift+F3, then give a bubble of
+  Photoshop's own ring that key as a keyboard shortcut. Each press of the bubble plays the action
+  once. This is your own setup with what the program already has, not a built-in Photoshop dial:
+  turning a dial to change a value (brightness, saturation) cannot be done this way and is not done
+  yet. No ring of F keys comes with the program: it cannot know which actions you recorded.
 - **The haptic panel does not answer while a main button is held.** With the left button down the
   mouse reports nothing for the panel, however hard it is pressed; the gesture button is reported
   all the same. So gestures made while a window is being dragged want the gesture button, not the

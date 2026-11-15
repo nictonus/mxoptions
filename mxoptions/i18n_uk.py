@@ -178,11 +178,28 @@ STRINGS = {
     "Switch tabs": "Перемикання вкладок",
     "Switch desktops": "Перемикання стільниць",
     "Brightness": "Яскравість",
+    "Custom keystrokes": "Власні комбінації клавіш",
+    "Turning up": "Обертання вгору",
+    "Turning down": "Обертання вниз",
+    "Record": "Записати",
+    "Clear": "Очистити",
+    "Record the keystroke for turning up": "Записати комбінацію для обертання вгору",
+    "Record the keystroke for turning down": "Записати комбінацію для обертання вниз",
+    "Clear the keystroke for turning up": "Очистити комбінацію для обертання вгору",
+    "Clear the keystroke for turning down": "Очистити комбінацію для обертання вниз",
+    "At most 20 keystrokes per second. Fast turns may skip steps; skipped steps do not run later.":
+        "Щонайбільше 20 комбінацій за секунду. Швидке обертання може пропускати кроки; пропущені кроки не виконуються пізніше.",
 
     # haptics
     "Vibration feedback from the thumb panel.": "Вібровідгук сенсорної панелі.",
     "Feedback": "Відгук",
     "Haptic feedback": "Вібровідгук",
+    "Battery saving": "Економія заряду",
+    "At {percent}% battery or less the mouse does not vibrate, not even for patterns you try or for games; "
+    "above {percent}% it does again. What the mouse does by itself, as when it is switched on, stays.":
+        "При заряді {percent}% або менше миша не вібрує, навіть для візерунків, які ви пробуєте, чи для ігор; "
+        "понад {percent}% вона знову вібрує. Те, що миша робить сама, як-от під час увімкнення, не змінюється.",
+    "Vibration is off now to save the battery.": "Зараз вібрацію вимкнено, щоб зберегти заряд.",
     "Intensity": "Інтенсивність",
     "Subtle": "Ледь чутно",
     "Low": "Слабко",
@@ -191,6 +208,13 @@ STRINGS = {
     "Fine tune": "Точне налаштування",
     "Feedback for actions": "Відгук на дії",
     "A tick for gestures, the Actions Ring and mode changes.": "Короткий імпульс для жестів, кільця дій і зміни режимів.",
+    "Switching screens": "Перемикання екранів",
+    "A short tick when the pointer moves onto another screen of this computer. Moving to another computer with Flow does "
+    "not count.":
+        "Короткий імпульс, коли вказівник переходить на інший екран цього комп'ютера. Перехід на інший комп'ютер через Flow "
+        "не враховується.",
+    "This desktop does not tell programs which screen the pointer is on.":
+        "Цей робочий стіл не повідомляє програмам, на якому екрані вказівник.",
     "Press force": "Сила натиску",
     "How hard you have to press the thumb panel.": "Наскільки сильно треба тиснути на панель.",
     "Light": "Легко",
@@ -316,12 +340,16 @@ STRINGS = {
     "No steps yet. Add the first one below.": "Кроків ще немає. Додайте перший нижче.",
     "Repeat while the button is held": "Повторювати, поки кнопку затиснуто",
     "Only applies when the macro is assigned to a mouse button.": "Діє лише коли макрос призначено на кнопку миші.",
+    "Press again to stop": "Зупиняти повторним натисканням",
+    "Pressing its mouse button or key again while it plays stops it, instead of playing it once more. Not for gestures, Actions Ring bubbles or other programs.":
+        "Повторне натискання його кнопки миші чи клавіші, поки він виконується, зупиняє його замість повторного запуску. Не діє для жестів, бульбашок кільця дій та інших програм.",
     "Keys": "Клавіші",
     "Text": "Текст",
     "Wait": "Пауза",
     "Click": "Клік",
     "Command": "Команда",
     "Text to insert": "Текст для вставлення",
+    "Choose an action": "Виберіть дію",
     "Left": "Лівий",
     "Right": "Правий",
     "Middle": "Середній",
@@ -422,8 +450,9 @@ STRINGS = {
     "Choose a sound": "Виберіть звук",
     "Sounds (*.wav)": "Звуки (*.wav)",
     "Feel the steps": "Відчутні кроки",
-    "This wheel turns smoothly, so each step of volume, tabs, desktops, brightness or zoom gets a tick.":
-        "Це коліщатко крутиться плавно, тому кожен крок гучності, вкладок, стільниць, яскравості чи масштабу дає короткий тик.",
+    "This wheel turns smoothly, so each step of volume, tabs, desktops, brightness, zoom or keystrokes gets a tick.":
+        "Це коліщатко крутиться плавно, тому кожен крок гучності, вкладок, стільниць, яскравості, масштабу чи комбінацій "
+        "клавіш дає короткий тик.",
 
     # firmware
     # shapes drawn with a gesture button
@@ -522,6 +551,14 @@ STRINGS = {
     "Connected, everything between the two is encrypted.": "З'єднано, усе між ними зашифровано.",
     "Not connected right now.": "Зараз не з'єднано.",
     "Forget": "Забути",
+    "Paused": "Призупинено",
+    "Use {} with Flow": "Використовувати {} у Flow",
+    "Paused. It stays paired: switch it on to use it with Flow again.":
+        "Призупинено. Спарювання лишається: увімкніть, щоб знову користуватися ним у Flow.",
+    "{} is paused: from now on the mouse does not cross to it or back, and nothing copied goes along; a switch "
+    "already under way still finishes. The mouse's Easy-Switch button still switches to it.":
+        "{} призупинено: відтепер миша не переходить на нього й назад, а скопійоване не передається; перемикання, "
+        "що вже почалося, завершиться. Кнопка Easy-Switch на миші й далі перемикає на нього.",
     "Pair with another computer": "Спарувати з іншим комп'ютером",
     "Press this on one of the two computers. On the other, open this page: it finds this computer by itself and asks "
     "for the code.":
@@ -558,6 +595,29 @@ STRINGS = {
     "Cross while a full-screen window is in front": "Переходити, коли попереду повноекранне вікно",
     "Off, a game or a film in full screen keeps the mouse however hard you push.":
         "Якщо вимкнено, гра чи фільм на весь екран не відпустять мишу, хоч як тисни.",
+    "Cross only while Ctrl is held": "Переходити лише із затиснутою Ctrl",
+    "Hold either Ctrl key while pushing past the edge, so that only reaching the edge keeps the mouse here. "
+    "The action “Move to the other computer (Flow)” and the Easy-Switch buttons do not need it.":
+        "Тримайте будь-яку з клавіш Ctrl, коли продавлюєте за край, тож сам лише край лишає мишу тут. "
+        "Дії «Перейти на інший комп'ютер (Flow)» і кнопкам Easy-Switch це не потрібно.",
+    "This desktop does not tell MX Options whether Ctrl is held: while this is on, the edge keeps the "
+    "mouse here. The action “Move to the other computer (Flow)” still sends it.":
+        "Цей робочий стіл не каже MX Options, чи затиснуто Ctrl: поки це ввімкнено, край лишає мишу тут. "
+        "Дія «Перейти на інший комп'ютер (Flow)» усе одно її переводить.",
+    "This desktop does not tell MX Options whether Ctrl is held, so this cannot be used here.":
+        "Цей робочий стіл не каже MX Options, чи затиснуто Ctrl, тож тут цим не скористатися.",
+    "Mouse follows the keyboard": "Миша йде за клавіатурою",
+    "Switch the keyboard to one of these computers with its Easy-Switch key, and the mouse goes along. "
+    "Only between computers running MX Options; this is not Logitech's Easy-Switch of Options+.":
+        "Перемкніть клавіатуру на один із цих комп'ютерів її клавішею Easy-Switch, і миша піде слідом. "
+        "Лише між комп'ютерами з MX Options; це не Easy-Switch від Logitech в Options+.",
+    "Keyboard follows the mouse": "Клавіатура йде за мишею",
+    "Send the mouse to one of these computers and the keyboard goes along, when no key is held. Works "
+    "from Linux with a Bluetooth keyboard; not yet tried with a real keyboard. Windows can receive the "
+    "keyboard but cannot send it on; use the keyboard's Easy-Switch key there.":
+        "Перешліть мишу на один із цих комп'ютерів, і клавіатура піде слідом, якщо жодна клавіша не натиснута. "
+        "Працює з Linux із клавіатурою на Bluetooth; зі справжньою клавіатурою ще не перевірено. Windows може "
+        "прийняти клавіатуру, але не передати її далі; там скористайтеся клавішею Easy-Switch клавіатури.",
 
     "What goes along": "Що переходить разом із мишею",
     "Copied text and pictures": "Скопійований текст і зображення",
@@ -731,4 +791,369 @@ STRINGS = {
     "Add a udev rule granting your user access to uinput and log in again.":
         "Немає доступу до /dev/uinput: комбінації клавіш, кліки та плавна прокрутка не працюватимуть. "
         "Додайте правило udev із доступом до uinput для вашого користувача та увійдіть знову.",
+
+    # the keyboard
+    "Keyboard": "Клавіатура",
+    "Status": "Стан",
+    "Battery": "Акумулятор",
+    "Key {}": "Клавіша {}",
+    "Fn lock": "Фіксація Fn",
+    "Fn lock key": "Клавіша фіксації Fn",
+    "F-Lock": "F-Lock",
+    "Backlight down": "Підсвітка −",
+    "Backlight up": "Підсвітка +",
+    "Kept by the keyboard": "За клавіатурою",
+    "MX Options leaves the Easy-Switch keys and the keys of the Fn layer to the keyboard, so that switching computers "
+    "and the Fn keys always work.":
+        "MX Options залишає клавіші Easy-Switch і клавіші шару Fn самій клавіатурі, щоб перемикання комп'ютерів "
+        "і клавіші Fn працювали завжди.",
+    "Changed by another program": "Змінено іншою програмою",
+    "Another program has changed what this key sends, so MX Options leaves it alone.":
+        "Інша програма змінила те, що надсилає ця клавіша, тож MX Options її не чіпає.",
+    "Changed already": "Уже змінено",
+    "This key was already changed when the keyboard was found, and MX Options cannot tell by whom, so it leaves the key alone.":
+        "Ця клавіша вже була змінена, коли клавіатуру знайдено, і MX Options не може визначити ким, тож її не чіпає.",
+    "Other software for Logitech devices is running, so the keys of the keyboard are left as they are.":
+        "Працює інша програма для пристроїв Logitech, тож клавіші клавіатури залишено як є.",
+    "This keyboard does not say which one it is, so its keys are left as they are.":
+        "Ця клавіатура не повідомляє, яка саме вона, тож її клавіші залишено як є.",
+    "The record of changed keys cannot be read: {}. Keys are left as they are.":
+        "Не вдається прочитати запис змінених клавіш: {}. Клавіші залишено як є.",
+    "The record of changed keys already lists 16 other keyboards, so the keys of this one are left as they are.":
+        "Запис змінених клавіш уже містить 16 інших клавіатур, тож клавіші цієї залишено як є.",
+    "The keyboard was not moved to the other computer: a key MX Options changed could not be given back first. "
+    "Its keys work as set here; try again in a moment.":
+        "Клавіатуру не перемкнуто на інший комп’ютер: не вдалося спершу повернути клавішу, змінену MX Options. "
+        "Її клавіші працюють, як налаштовано тут; спробуйте ще раз за мить.",
+    "Pick a key to choose what it does. A key left at Default does what it always does; the keys you change go back "
+    "to normal when MX Options quits.":
+        "Виберіть клавішу, щоб задати, що вона робить. Клавіша з дією «Типово» робить те, що й завжди; змінені клавіші "
+        "повертаються до звичайної роботи, коли MX Options завершує роботу.",
+    "The keyboard has not said yet how this key reports; the action is applied once it does.":
+        "Клавіатура ще не повідомила, як працює ця клавіша; дію буде застосовано, щойно вона це зробить.",
+    "Turn the keyboard on to see its keys here. Its receiver can be the one of the mouse.":
+        "Увімкніть клавіатуру, щоб побачити тут її клавіші. Вона може працювати через ресівер миші.",
+    "Press an Easy-Switch key to move the keyboard to the computer on that channel. Hold one for three seconds to pair "
+    "the keyboard with another computer on it.":
+        "Натисніть клавішу Easy-Switch, щоб перевести клавіатуру на комп'ютер цього каналу. Утримуйте її три секунди, "
+        "щоб спарувати клавіатуру з іншим комп'ютером на цьому каналі.",
+    "fwupd, the system's firmware updater, does not see the keyboard right now.":
+        "fwupd, системний засіб оновлення прошивок, зараз не бачить клавіатуру.",
+    "Firmware {}": "Прошивка {}",
+    "Read from the keyboard. fwupd, the system's firmware updater, does not see it right now.":
+        "Прочитано з клавіатури. fwupd, системний засіб оновлення прошивок, зараз її не бачить.",
+    "Keyboard settings": "Налаштування клавіатури",
+    "Settings the keyboard controls itself. Changes are made on the keyboard. Its own shortcuts may change them too.":
+        "Налаштування, якими клавіатура керує сама. Зміни робляться на клавіатурі. Її власні сполучення клавіш теж "
+        "можуть їх змінювати.",
+    "Use F1–F12 without Fn": "F1–F12 без Fn",
+    "On: the top row gives F1–F12, and Fn with a key gives its other function. Off: the other way round. The "
+    "keyboard's own Fn lock shortcut changes it too.":
+        "Увімкнено: верхній ряд дає F1–F12, а Fn разом із клавішею дає її іншу функцію. Вимкнено: навпаки. "
+        "Власне сполучення клавіатури для фіксації Fn теж це змінює.",
+    "The keyboard did not say how this is set.": "Клавіатура не повідомила, як це налаштовано.",
+    "The keyboard does not let MX Options change this.": "Клавіатура не дозволяє MX Options це змінювати.",
+    "The keyboard did not take the change.": "Клавіатура не прийняла зміну.",
+    "The keyboard did not take the change as asked; the earlier setting was put back.":
+        "Клавіатура прийняла зміну не так, як просили; попереднє налаштування повернуто.",
+    "The keyboard did not confirm the change. Shown as the keyboard reports it.":
+        "Клавіатура не підтвердила зміну. Показано так, як повідомляє клавіатура.",
+    "The keyboard can swap whether the top row gives F1–F12 or its other functions without Fn, as its guide "
+    "describes. MX Options does not change this yet.":
+        "Клавіатура може міняти, що дає верхній ряд без Fn: F1–F12 чи свої інші функції, як описано в її посібнику. "
+        "MX Options поки цього не змінює.",
+    "Backlight": "Підсвітка",
+    "The keyboard has a backlight with settings of its own, set on the keyboard as its guide describes. MX Options "
+    "does not change them yet.":
+        "Клавіатура має підсвітку з власними налаштуваннями, які задають на самій клавіатурі, як описано в її "
+        "посібнику. MX Options поки їх не змінює.",
+    "Backlight on": "Підсвітку ввімкнено",
+    "The keyboard keeps these settings itself; its own backlight keys change them too. MX Options does not store them.":
+        "Клавіатура зберігає ці налаштування сама; її власні клавіші підсвітки теж їх змінюють. MX Options їх не зберігає.",
+    "MX Options does not change the backlight of this keyboard; its own keys do.":
+        "MX Options не змінює підсвітку цієї клавіатури; це роблять її власні клавіші.",
+    "Brightness is set with the keyboard's keys just now. Choose Automatic or Fixed to set it here.":
+        "Зараз яскравість задано клавішами клавіатури. Виберіть «Авто» або «Стала», щоб задати її тут.",
+    "Brightness is set with the keyboard's keys.": "Яскравість задають клавішами клавіатури.",
+    "The keyboard uses a brightness setting MX Options does not know; it is left as it is.":
+        "Клавіатура використовує налаштування яскравості, якого MX Options не знає; його залишено як є.",
+    "Brightness and timing are set with the keyboard's keys; newer keyboard firmware may let MX Options set them too.":
+        "Яскравість і час задають клавішами клавіатури; новіша прошивка клавіатури може дозволити MX Options задавати "
+        "їх теж.",
+    "Fixed": "Стала",
+    "Automatic brightness": "Автоматична яскравість",
+    "Fixed brightness": "Стала яскравість",
+    "Brightness level": "Рівень яскравості",
+    "Backlight brightness level": "Рівень яскравості підсвітки",
+    "Dimmer": "Тьмяніше",
+    "Brighter": "Яскравіше",
+    "Steps 0 to {top}, as the keyboard counts them. In Automatic, the light around the keyboard sets the brightness.":
+        "Кроки від 0 до {top}, як їх лічить клавіатура. В режимі «Авто» яскравість задає світло навколо клавіатури.",
+    "Off after, hands away": "Вимкнення, руки далеко",
+    "Backlight off after, hands away": "Вимкнення підсвітки, руки далеко",
+    "How long the backlight stays on after you type, once your hands move away.":
+        "Скільки підсвітка світить після набору, коли руки відійшли від клавіатури.",
+    "Off after, hands near": "Вимкнення, руки поруч",
+    "Backlight off after, hands near": "Вимкнення підсвітки, руки поруч",
+    "How long the backlight stays on after you type, while your hands stay near the keyboard.":
+        "Скільки підсвітка світить після набору, поки руки лишаються поруч із клавіатурою.",
+    "Off after, plugged in": "Вимкнення, під час заряджання",
+    "Backlight off after, plugged in": "Вимкнення підсвітки під час заряджання",
+    "How long the backlight stays on after you type, while the keyboard is charging over USB.":
+        "Скільки підсвітка світить після набору, поки клавіатура заряджається через USB.",
+    "Not known": "Невідомо",
+    "{} h": "{} год",
+    "{} min": "{} хв",
+    "{} s": "{} с",
+    "Off at low battery": "Вимкнення при низькому заряді",
+    "Shown as the keyboard reports it. MX Options does not change this yet.":
+        "Показано так, як повідомляє клавіатура. MX Options поки цього не змінює.",
+    "Show a notice when the brightness changes on the keyboard": "Показувати сповіщення, коли яскравість змінюється на клавіатурі",
+    "Keyboard backlight: level {level} of {top}": "Підсвітка клавіатури: рівень {level} з {top}",
+    "Operating system layout": "Розкладка для операційної системи",
+    "The keyboard can be set up for the layout of another operating system, on the keyboard itself as its guide "
+    "describes. MX Options does not change this yet.":
+        "Клавіатуру можна налаштувати на розкладку іншої операційної системи на самій клавіатурі, як описано в її "
+        "посібнику. MX Options поки цього не змінює.",
+    "Disable keys": "Вимкнення клавіш",
+    "The keyboard can turn some of its keys off. MX Options does not do this yet.":
+        "Клавіатура може вимикати деякі свої клавіші. MX Options поки цього не робить.",
+    "Windows/Super key": "Клавіша Windows/Super",
+    "Turn off the {} key": "Вимкнути клавішу {}",
+    "Turn off keys you press by mistake. A key turned off does nothing; turn its switch off to enable it again.":
+        "Вимкніть клавіші, які натискаєте випадково. Вимкнена клавіша нічого не робить; щоб знову її ввімкнути, "
+        "вимкніть її перемикач.",
+    "The keyboard does this itself. Whether it keeps it after it is switched off is not known yet; MX Options shows "
+    "what the keyboard reports.":
+        "Клавіатура робить це сама. Чи зберігає вона це після вимкнення, поки невідомо; MX Options показує те, що "
+        "повідомляє клавіатура.",
+    "Layout {}": "Розкладка {}",
+    "The layout the keyboard uses for the operating system on this Easy-Switch channel; each channel keeps its own. "
+    "The keyboard's own shortcut for it, as its guide describes, changes it too.":
+        "Розкладка, яку клавіатура використовує для операційної системи на цьому каналі Easy-Switch; кожен канал має "
+        "свою. Власне сполучення клавіш клавіатури для неї, як описано в її посібнику, теж її змінює.",
+    "Lock keys": "Клавіші фіксації",
+    "The keyboard reports when Caps Lock, Num Lock or Scroll Lock turns on or off. MX Options can show a notice then; "
+    "it never saves or logs their state.":
+        "Клавіатура повідомляє, коли Caps Lock, Num Lock чи Scroll Lock вмикається чи вимикається. MX Options може тоді "
+        "показати сповіщення; стан цих клавіш ніколи не зберігається й не записується в журнал.",
+    "Show a notice when a lock key turns on or off": "Показувати сповіщення, коли клавіша фіксації вмикається чи вимикається",
+    "Show a notice when Fn lock changes on the keyboard": "Показувати сповіщення, коли фіксація Fn змінюється на клавіатурі",
+    "Fn lock on: the top row gives F1–F12": "Фіксацію Fn увімкнено: верхній ряд дає F1–F12",
+    "Fn lock off: the top row gives its other functions": "Фіксацію Fn вимкнено: верхній ряд дає інші функції",
+    "{key} on": "{key} увімкнено",
+    "{key} off": "{key} вимкнено",
+    "Every key does what it always does": "Кожна клавіша робить те, що й завжди",
+    "Restore keyboard defaults": "Відновити типові налаштування клавіатури",
+    "Give every key of the keyboard back its own function, in every app? The keys set for single apps go too.":
+        "Повернути всім клавішам клавіатури їхні власні функції в усіх програмах? Клавіші, задані для окремих програм, теж зникнуть.",
+    "Keys for": "Клавіші для",
+    "All apps": "Усі програми",
+    "Add app": "Додати програму",
+    "Remove": "Вилучити",
+    "Remove the keys of this app": "Вилучити клавіші цієї програми",
+    "Remove the keys of {}? In that app the keys then do what they do in every app.":
+        "Вилучити клавіші {}? У цій програмі клавіші робитимуть те саме, що й в усіх інших.",
+    "As in all apps": "Як в усіх програмах",
+    "This desktop does not tell other programs which app is in front, so keys of their own for one app cannot "
+    "work here. The keys do what is set for all apps.":
+        "Це робоче середовище не повідомляє іншим програмам, яка програма зараз попереду, тому окремі клавіші для "
+        "однієї програми тут не працюють. Клавіші роблять те, що задано для всіх програм.",
+    "While {} is in front. \"As in all apps\": the key does what it does in every app. \"Default\": the key does "
+    "what it always does, here, even where it is changed for all apps.":
+        "Поки попереду {}. «Як в усіх програмах»: клавіша робить те саме, що й в усіх програмах. «Типово»: клавіша "
+        "робить те, що й завжди, тут, навіть якщо для всіх програм її змінено.",
+    "To give an app keys of its own, add it: {} was in front last.":
+        "Щоб дати програмі власні клавіші, додайте її: останньою попереду була {}.",
+    "To give an app keys of its own, switch to it, then come back here and add it.":
+        "Щоб дати програмі власні клавіші, перейдіть до неї, потім поверніться сюди й додайте її.",
+    "The battery of {name} is low ({percent}%). Charge it soon.":
+        "Акумулятор {name} майже розряджений ({percent}%). Зарядіть його найближчим часом.",
+    "Export…": "Експортувати…",
+    "Import…": "Імпортувати…",
+    "Settings file": "Файл налаштувань",
+    "Every setting in one file, your commands and scripts included: keep it private. The pairings of Flow stay on "
+    "this computer.":
+        "Усі налаштування в одному файлі, разом із вашими командами й скриптами: не показуйте його іншим. "
+        "Пари Flow лишаються на цьому комп’ютері.",
+    "Export settings": "Експорт налаштувань",
+    "Import settings": "Імпорт налаштувань",
+    "Settings (*.json)": "Налаштування (*.json)",
+    "The settings are in {}.": "Налаштування збережено у {}.",
+    "Replace every setting with the ones in {}? The settings you have now are kept in a backup first, and the "
+    "pairings of Flow stay as they are.":
+        "Замінити всі налаштування тими, що у {}? Поточні налаштування спершу буде збережено в резервній копії, "
+        "а пари Flow лишаться як є.",
+    "The settings of {} are in use. A change of language takes effect after restarting the app.":
+        "Налаштування з {} застосовано. Зміна мови набуде чинності після перезапуску програми.",
+    "It is {size} KB, more than the {limit} KB a settings file may have.":
+        "Його розмір {size} КБ, більше за {limit} КБ, дозволені для файлу налаштувань.",
+    "It is not a settings file of MX Options.": "Це не файл налаштувань MX Options.",
+    "It was made by a newer version of MX Options.": "Його створила новіша версія MX Options.",
+    "The settings hold something a settings file cannot.": "Налаштування містять те, чого файл налаштувань містити не може.",
+    "Nothing was exported. {}": "Нічого не експортовано. {}",
+    "The settings were written, but the system could not confirm that they are safely on the disk ({}).":
+        "Налаштування записано, але система не змогла підтвердити, що вони надійно збережені на диску ({}).",
+    "The settings could not be written ({}).": "Не вдалося записати налаштування ({}).",
+    "{name} cannot be imported. {reason}": "{name} не можна імпортувати. {reason}",
+    "{name} could not be read ({reason}).": "Не вдалося прочитати {name} ({reason}).",
+    "Export macro": "Експорт макросу",
+    "Import macro": "Імпорт макросу",
+    "Macro (*.json)": "Макрос (*.json)",
+    "The macro is in {}. Everything it types or runs is in the file as written.":
+        "Макрос збережено у {}. Усе, що він вводить чи запускає, записано у файлі як є.",
+    "The macro was written, but the system could not confirm that it is safely on the disk ({}).":
+        "Макрос записано, але система не змогла підтвердити, що він надійно збережений на диску ({}).",
+    "The macro could not be written ({}).": "Не вдалося записати макрос ({}).",
+    "It is not a macro file of MX Options.": "Це не файл макросу MX Options.",
+    "It is {size} KB, more than the {limit} KB a macro file may have.":
+        "Його розмір {size} КБ, більше за {limit} КБ, дозволені для файлу макросу.",
+    "The macro has no complete step yet.": "У макросі ще немає жодного завершеного кроку.",
+    "The macro holds something a macro file cannot.": "Макрос містить те, чого файл макросу містити не може.",
+    "Imported from {}. A macro file can run commands: check each step before you save.":
+        "Імпортовано з {}. Файл макросу може запускати команди: перевірте кожен крок, перш ніж зберегти.",
+    "Nothing was imported: the settings in use could not be kept in a backup first ({}).":
+        "Нічого не імпортовано: не вдалося спершу зберегти поточні налаштування в резервній копії ({}).",
+    "Nothing was imported: the system could not confirm that the new settings are safely on the disk ({reason}), "
+    "and putting the settings in use back in their file failed too ({again}). The file may hold the imported "
+    "settings; the settings in use are kept in {backup}.":
+        "Нічого не імпортовано: система не змогла підтвердити, що нові налаштування надійно збережені на диску "
+        "({reason}), і повернути поточні налаштування до їхнього файлу теж не вдалося ({again}). Файл може містити "
+        "імпортовані налаштування; поточні налаштування збережено в {backup}.",
+    "Nothing was imported: the system could not confirm that the new settings are safely on the disk ({}). The "
+    "settings in use were put back.":
+        "Нічого не імпортовано: система не змогла підтвердити, що нові налаштування надійно збережені на диску ({}). "
+        "Поточні налаштування повернуто.",
+    "Nothing was imported: the settings could not be saved ({}). They are as they were.":
+        "Нічого не імпортовано: не вдалося зберегти налаштування ({}). Вони лишилися як були.",
+    "Settings for": "Налаштування для",
+    "Remove the settings of this app": "Вилучити налаштування цієї програми",
+    "Remove the settings of {}? There the mouse then works as in every app.":
+        "Вилучити налаштування {}? Там миша працюватиме як в усіх програмах.",
+    "This desktop does not tell which app is in front, so settings for one app cannot work here.":
+        "Це робоче середовище не повідомляє, яка програма попереду, тому налаштування для однієї програми тут не працюють.",
+    "While {} is in front. \"As in all apps\": as set for all apps. \"Default\": the button's own function, even "
+    "where all apps change it.":
+        "Поки попереду {}. «Як в усіх програмах»: як задано для всіх програм. «Типово»: власна функція кнопки, навіть "
+        "якщо для всіх програм її змінено.",
+    "To give an app its own settings, add it: {} was in front last.":
+        "Щоб дати програмі власні налаштування, додайте її: останньою попереду була {}.",
+    "To give an app its own settings, switch to it, then come back and add it.":
+        "Щоб дати програмі власні налаштування, перейдіть до неї, потім поверніться й додайте її.",
+    "{} uses the ring for all apps.": "{} використовує кільце для всіх програм.",
+    "Make a ring for this app": "Створити кільце для цієї програми",
+    "Use the ring for all apps": "Використовувати кільце для всіх програм",
+    "Use the ring for all apps in {}? Its own ring goes.": "Використовувати в {} кільце для всіх програм? Власне кільце зникне.",
+    "Size and style are shared by all apps.": "Розмір і вигляд спільні для всіх програм.",
+    "While {} is in front. \"As in all apps\": the function set for all apps. Direction, speed and steps are the "
+    "same in every app; the keystrokes can be its own.":
+        "Поки попереду {}. «Як в усіх програмах»: функція, задана для всіх програм. Напрямок, швидкість і кроки "
+        "однакові в усіх програмах; комбінації клавіш можуть бути власними.",
+    "Use the keystrokes for all apps": "Використовувати комбінації для всіх програм",
+    "Keystrokes": "Комбінації клавіш",
+    "{} has keystrokes of its own.": "{} має власні комбінації клавіш.",
+    "As in all apps. Recording or clearing one here gives {} keystrokes of its own.":
+        "Як в усіх програмах. Запис чи очищення тут дасть {} власні комбінації клавіш.",
+    "Holding it and moving": "Утримання й рух",
+    "Swipes": "Напрямки",
+    "Pan": "Панорама",
+    "Pan (hold and move)": "Панорама (утримати й рухати)",
+    "Zoom (hold and move)": "Масштаб (утримати й рухати)",
+    "How far the page moves, or how quickly it zooms, for the same movement of the hand.":
+        "Наскільки зсувається сторінка або як швидко змінюється масштаб за той самий рух руки.",
+    "Each way you move runs its own action, set under \"Change what the gestures do…\".":
+        "Кожен напрямок руху виконує власну дію, задану в «Змінити дії жестів…».",
+    "While the button is held, the page follows your hand: up, down and sideways. The pointer stays where it is. "
+    "A press without moving still runs the tap action.":
+        "Поки кнопку утримано, сторінка рухається за рукою: вгору, вниз і вбік. Вказівник лишається на місці. "
+        "Натискання без руху й далі виконує дію натискання.",
+    "While the button is held, move up to zoom in and down to zoom out, as Ctrl and the wheel do. A press without "
+    "moving still runs the tap action.":
+        "Поки кнопку утримано, рух угору збільшує масштаб, а вниз зменшує, як Ctrl з колесом. Натискання без руху "
+        "й далі виконує дію натискання.",
+    # Spotlight effects
+    "Spotlight effects": "Ефекти прожектора",
+    "Highlight": "Підсвічування",
+    "Still Magnify": "Нерухома лупа",
+    "Digital Laser": "Цифрова лазерна указка",
+    "On": "Увімк.",
+    "Show this effect": "Показувати цей ефект",
+    "Size": "Розмір",
+    "Colour": "Колір",
+    "Hold the button: the effect follows the pointer until you let go. With more than one effect on, "
+    "double-click and hold for the next one. Clicks and scrolling do nothing while it shows. Still Magnify "
+    "shows the screen as it was when you pressed, and not on Wayland desktops.":
+        "Утримуйте кнопку: ефект іде за вказівником, доки ви її не відпустите. Якщо ввімкнено кілька ефектів, "
+        "двічі клацніть і утримуйте, щоб перейти до наступного. Поки ефект видно, клацання й прокрутка нічого не "
+        "роблять. Нерухома лупа показує екран таким, яким він був у мить натискання, і не працює на стільницях Wayland.",
+    "Shows the screen as it was when you pressed: a still picture, kept in memory until you let go. "
+    "Not a live magnifier.":
+        "Показує екран таким, яким він був у мить натискання: нерухомий знімок, що зберігається лише в пам'яті, "
+        "доки ви не відпустите кнопку. Це не жива лупа.",
+    "Not available on Wayland desktops.": "Недоступно на стільницях Wayland.",
+    "Not available on this desktop.": "Недоступно на цій стільниці.",
+    # Suggested settings for one app
+    "Suggested settings": "Запропоновані налаштування",
+    "Web browser": "Веббраузер",
+    "Spreadsheet": "Електронна таблиця",
+    "Documents and slides": "Документи й слайди",
+    "Zoom meetings": "Зустрічі в Zoom",
+    "Microsoft Teams meetings": "Зустрічі в Microsoft Teams",
+    "Photoshop": "Photoshop",
+    "Premiere": "Premiere",
+    "Own choice after the Windows shortcuts Adobe documents, not the settings of Logi Options+. Adobe names [ and ] "
+    "for the brush size of Pattern Stamp and Spot Healing Brush; for other tools it does not say. With \"Use Legacy "
+    "Undo Shortcuts\" on, Ctrl+Z works otherwise. These are key positions of a US keyboard: with another "
+    "layout, or shortcuts changed in the app, they may do something else.":
+        "Власний вибір за клавішами Windows, які описує Adobe, а не налаштування Logi Options+. Adobe називає [ і ] "
+        "для розміру пензля в Pattern Stamp і Spot Healing Brush; про інші інструменти не каже. З увімкненим "
+        "«Use Legacy Undo Shortcuts» Ctrl+Z працює інакше. Це місця клавіш американської клавіатури: з іншою "
+        "розкладкою чи зміненими в програмі клавішами вони можуть робити інше.",
+    "Own choice after the Windows shortcuts Adobe documents, not the settings of Logi Options+. Page Down and Page "
+    "Up show the next and the previous screen of the Timeline: a whole screen per step, not smooth scrolling. Adobe "
+    "says the pointer must be over the Timeline; its list of shortcuts says the panel must have focus. These "
+    "are key positions of a US keyboard: with another layout, or shortcuts changed in the app, they may do "
+    "something else.":
+        "Власний вибір за клавішами Windows, які описує Adobe, а не налаштування Logi Options+. Page Down і Page Up "
+        "показують наступний і попередній екран Timeline: цілий екран за крок, а не плавна прокрутка. Adobe каже, що "
+        "вказівник має бути над Timeline; її список клавіш каже, що панель має бути у фокусі. Це місця клавіш "
+        "американської клавіатури: з іншою розкладкою чи зміненими в програмі клавішами вони можуть робити інше.",
+    "To undo the keystrokes of the thumb wheel, choose \"Use the keystrokes for all apps\" on the Point & scroll "
+    "page, before its function.":
+        "Щоб скасувати комбінації бічного колеса, виберіть «Використовувати комбінації для всіх програм» на сторінці "
+        "«Вказівник і прокрутка», раніше ніж його функцію.",
+    "Own choice from Zoom's default shortcuts, not a set of Logi Options+: back sends Alt+A (mute or unmute your "
+    "audio), forward Alt+V (start or stop your video), once per press. They work while Zoom is in front and its "
+    "shortcuts are unchanged. Keys are key positions: on a layout where A or V sit elsewhere (French, for one), other "
+    "shortcuts are sent.":
+        "Власний вибір зі стандартних скорочень Zoom, а не набір Logi Options+: «Назад» надсилає Alt+A (вимкнути чи "
+        "ввімкнути звук), «Вперед» — Alt+V (увімкнути чи вимкнути відео), раз на натискання. Вони діють, поки Zoom "
+        "на передньому плані і його скорочення не змінено. Клавіші — це положення клавіш: на розкладці, де A чи V "
+        "стоять деінде (французькій, наприклад), надсилаються інші скорочення.",
+    "Own choice from the default shortcuts of the Teams desktop app for Windows, not a set of Logi Options+: back "
+    "sends Ctrl+Shift+M (mute or unmute), forward Ctrl+Shift+O (video on or off), once per press. They work while "
+    "Teams is in front and its shortcuts are unchanged. Microsoft lists them for the US layout; keys are key "
+    "positions.":
+        "Власний вибір зі стандартних скорочень програми Teams для Windows, а не набір Logi Options+: «Назад» "
+        "надсилає Ctrl+Shift+M (вимкнути чи ввімкнути мікрофон), «Вперед» — Ctrl+Shift+O (увімкнути чи вимкнути "
+        "відео), раз на натискання. Вони діють, поки Teams на передньому плані і його скорочення не змінено. "
+        "Microsoft наводить їх для розкладки США; клавіші — це положення клавіш.",
+    "Apply the suggested settings \"{preset}\" to {app}?": "Застосувати запропоновані налаштування «{preset}» до {app}?",
+    "{control}: stays as set for this app ({value})": "{control}: лишається, як задано для цієї програми ({value})",
+    "Logi Options+ also pans while the middle button is held here. These settings leave the middle button as it "
+    "is: to pan, give it Gestures for this app and choose Pan.":
+        "Logi Options+ тут ще й прокручує сторінку, поки утримано середню кнопку. Ці налаштування лишають середню "
+        "кнопку як є: щоб прокручувати, дайте їй «Жести» для цієї програми й виберіть «Панорама».",
+    "These are the gestures for all apps. Those of {} are set on the Buttons page; how gestures are read and felt "
+    "counts in every app.":
+        "Це жести для всіх програм. Жести {} задаються на сторінці «Кнопки»; як жести розпізнаються й відчуваються, "
+        "однаково в усіх програмах.",
+    "Everything else stays as it is. To undo one of these, choose \"As in all apps\" for it.":
+        "Усе інше лишається як є. Щоб скасувати щось із цього, виберіть для нього «Як в усіх програмах».",
+    "Settings changed while this dialog was open. Choose Suggested settings again.":
+        "Налаштування змінилися, поки це вікно було відкрито. Знову виберіть «Запропоновані налаштування».",
+    "Settings changed while this dialog was open. Choose the bubble type again.":
+        "Налаштування змінилися, поки це вікно було відкрито. Знову виберіть тип бульбашки.",
+    "Settings changed while this dialog was open. Choose the preset again.":
+        "Налаштування змінилися, поки це вікно було відкрито. Знову виберіть пресет.",
 }

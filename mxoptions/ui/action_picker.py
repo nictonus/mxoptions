@@ -5,7 +5,8 @@ import copy
 from PySide6.QtCore import QPointF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
-    QButtonGroup, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget,
+    QAbstractButton, QButtonGroup, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea,
+    QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from .. import actions, config, gestures
@@ -13,7 +14,7 @@ from ..i18n import _
 from . import icons, ring, theme
 from .editors import MacroDialog, ScriptDialog
 from .recorder import ShortcutRecorder
-from .widgets import ElidedButton, ElidedLabel, InfoButton, titled, ui_scale
+from .widgets import ElidedButton, ElidedLabel, InfoButton, Row, SliderRow, SwatchRow, Switch, hint_label, titled, ui_scale
 
 GESTURE_LABELS = {
     "tap": "Tap",
@@ -30,6 +31,9 @@ SHAPE_LABELS = {
     "circle_cw": "Circle, clockwise", "circle_ccw": "Circle, anticlockwise",
     "zigzag_h": "Shake sideways", "zigzag_v": "Shake up and down",
 }
+# "Still Magnify" is this program's own: a still picture of the screen, not a live magnifier
+EFFECT_LABELS = {"highlight": "Highlight", "magnify": "Still Magnify", "laser": "Digital Laser"}
+EFFECT_COLORS = ["#000000", "#ffffff", "#f2605d", "#2fd6a7", "#4c9bff", "#f2c744", "#ff6fa8", "#8f7bff"]
 
 
 def shape_icon(name, size=26):
@@ -89,7 +93,12 @@ class ActionList(QWidget):
         self._group.setExclusive(True)
         self._sections = []  # (category label, [(row, extra widget shown under it or None)])
         self._rows = {}  # preset id -> row
+        self._hidden = frozenset()  # rows of the presets not offered for the control being edited (see set_hidden)
         self._current = None
+        # Offered for a key of an app profile only: what the key does in every app (picked as None)
+        self.inherit_row = self._row(_("As in all apps"), "edit-undo")
+        self.inherit_row.clicked.connect(lambda: self.picked.emit(None))
+        self.inherit_row.hide()
         for category, title in actions.CATEGORIES:
             presets = [p for p in actions.PRESETS if p.category == category and p.id not in exclude and p.available]
             if not presets:
@@ -209,7 +218,9 @@ class ActionList(QWidget):
         for button in self._group.buttons():
             button.setChecked(False)
         self._group.setExclusive(True)
-        if preset and preset.id in self._rows:
+        if action is None and not self.inherit_row.isHidden():
+            self.inherit_row.setChecked(True)
+        elif preset and preset.id in self._rows:
             self._rows[preset.id].setChecked(True)
         elif kind == "keys":
             self.keys_row.setChecked(True)
@@ -236,12 +247,19 @@ class ActionList(QWidget):
             self.macro_summary.setText(preview or _("Empty macro. Click \"Macro\" to edit."))
         self._sync_custom()
 
+    def set_hidden(self, ids):
+        """Offer none of the presets ``ids``, a search finding them neither."""
+        hidden = frozenset(self._rows[preset] for preset in ids if preset in self._rows)
+        if hidden != self._hidden:  # unchanged: what the list shows stays as its owner left it
+            self._hidden = hidden
+            self._filter(self.search.text())
+
     def _filter(self, text):
         needle = text.strip().lower()
         for label, rows in self._sections:
             any_visible = False
             for row, extra in rows:
-                visible = not needle or needle in row.text().lower()
+                visible = row not in self._hidden and (not needle or needle in row.text().lower())
                 row.setVisible(visible)
                 any_visible = any_visible or visible
             label.setVisible(any_visible)
@@ -253,11 +271,13 @@ class ActionPicker(QFrame):
 
     changed = Signal(object)
 
-    def __init__(self, allow_button_actions=True, parent=None):
+    def __init__(self, allow_button_actions=True, exclude=None, parent=None):
+        """``exclude``: catalogue ids not to offer (what a keyboard key cannot do)."""
         super().__init__(parent)
         self.setObjectName("picker")
         self.setFixedWidth(int(320 * ui_scale()))
         self._action = None
+        self._inherited = None  # what "As in all apps" does for the control being edited, when it is offered
         self._slot = None  # what of a gesture button is being edited: "tap", a direction or a shape
         outer = QVBoxLayout(self)
         outer.setContentsMargins(18, 20, 12, 14)
@@ -281,7 +301,18 @@ class ActionPicker(QFrame):
         block = QVBoxLayout(self.gesture_block)
         block.setContentsMargins(0, 0, 16, 0)
         block.setSpacing(4)
+        moving = QLabel(_("Holding it and moving"))
+        moving.setObjectName("hint")
+        block.addWidget(moving)
+        self.mode = QComboBox()  # a row of three does not fit this panel in every language
+        for value, label in (("swipes", "Swipes"), ("pan", "Pan"), ("zoom", "Zoom")):
+            self.mode.addItem(_(label), value)
+        self.mode.setAccessibleName(_("Holding it and moving"))
+        moving.setBuddy(self.mode)
+        self.mode.currentIndexChanged.connect(lambda index: self._mode_picked(self.mode.itemData(index)))
+        block.addWidget(self.mode)
         self._gesture_rows = {}
+        self._gesture_buttons = {}
         for direction in actions.DIRECTIONS:
             row = QPushButton()
             row.setObjectName("chip")
@@ -301,6 +332,7 @@ class ActionPicker(QFrame):
             row.clicked.connect(lambda _checked=False, d=direction: self._edit_slot(d))
             block.addWidget(row)
             self._gesture_rows[direction] = value
+            self._gesture_buttons[direction] = row
         shapes = QPushButton()  # one more row: the shapes that can be drawn with the button held
         shapes.setObjectName("chip")
         shapes.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -318,9 +350,40 @@ class ActionPicker(QFrame):
         shapes.setMinimumHeight(38)
         shapes.clicked.connect(lambda: self.stack.setCurrentIndex(3))
         block.addWidget(shapes)
+        self.shapes_button = shapes
         layout.addWidget(self.gesture_block)
 
-        self.list = ActionList(exclude=frozenset() if allow_button_actions else actions.BUTTON_ONLY)
+        self.spotlight_block = QWidget()  # the three Spotlight effects of the button, each to open and set up
+        block = QVBoxLayout(self.spotlight_block)
+        block.setContentsMargins(0, 0, 16, 0)
+        block.setSpacing(4)
+        self._effect_rows = {}
+        for effect in config.EFFECTS:
+            row = QPushButton()
+            row.setObjectName("chip")
+            row.setCursor(Qt.CursorShape.PointingHandCursor)
+            inner = QHBoxLayout(row)
+            inner.setContentsMargins(12, 8, 12, 8)
+            name = QLabel(_(EFFECT_LABELS[effect]))
+            name.setObjectName("chipTitle")
+            value = ElidedLabel()
+            value.setObjectName("chipValue")
+            value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            for label in (name, value):
+                label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            inner.addWidget(name)
+            inner.addWidget(value, 1)
+            row.setMinimumHeight(38)
+            row.clicked.connect(lambda _checked=False, e=effect: self._edit_effect(e))
+            block.addWidget(row)
+            self._effect_rows[effect] = (row, value)
+        block.addWidget(hint_label(_(
+            "Hold the button: the effect follows the pointer until you let go. With more than one effect on, "
+            "double-click and hold for the next one. Clicks and scrolling do nothing while it shows. Still Magnify "
+            "shows the screen as it was when you pressed, and not on Wayland desktops.")))
+        layout.addWidget(self.spotlight_block)
+
+        self.list = ActionList(exclude=(frozenset() if allow_button_actions else actions.BUTTON_ONLY) | frozenset(exclude or ()))
         self.list.picked.connect(self._picked)
         layout.addWidget(self.list, 1)
         self.stack.addWidget(main)
@@ -418,6 +481,41 @@ class ActionPicker(QFrame):
         layout.addWidget(area, 1)
         self.stack.addWidget(drawn)
 
+        # page 4: one Spotlight effect of the button
+        self._effect = None
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 16, 0)
+        layout.setSpacing(10)
+        back = QPushButton("‹  " + _("Back"))
+        back.setObjectName("flat")
+        back.setCursor(Qt.CursorShape.PointingHandCursor)
+        back.clicked.connect(lambda: self.stack.setCurrentIndex(0))
+        layout.addWidget(back, 0, Qt.AlignmentFlag.AlignLeft)
+        self.effect_title = QLabel()
+        self.effect_title.setObjectName("pickerTitle")
+        layout.addWidget(self.effect_title)
+        self.effect_switch = Switch()
+        self.effect_switch.setAccessibleName(_("Show this effect"))
+        self.effect_switch.toggled.connect(lambda on: self._effect_changed(self._effect, "on", on))
+        layout.addWidget(Row(_("Show this effect"), control=self.effect_switch))
+        self.effect_size = SliderRow(_("Size"), *config.EFFECT_SIZE)
+        self.effect_size.slider.setAccessibleName(_("Size"))
+        self.effect_size.changed.connect(lambda value: self._effect_changed(self._effect, "size", int(value)))
+        layout.addWidget(self.effect_size)
+        colour = QLabel(_("Colour"))
+        colour.setObjectName("rowTitle")
+        layout.addWidget(colour)
+        self.effect_color = SwatchRow(EFFECT_COLORS)
+        for swatch in self.effect_color.findChildren(QAbstractButton):
+            swatch.setAccessibleName(swatch.color)
+        self.effect_color.selected.connect(lambda color: self._effect_changed(self._effect, "color", color))
+        layout.addWidget(self.effect_color)
+        self.effect_note = hint_label("")
+        layout.addWidget(self.effect_note)
+        layout.addStretch(1)
+        self.stack.addWidget(page)
+
     def show_fixed(self, title, value, text):
         """Describe a control whose function is built into the mouse."""
         self._action = None
@@ -426,8 +524,15 @@ class ActionPicker(QFrame):
         self.fixed_text.setText(text)
         self.stack.setCurrentIndex(2)
 
-    def edit(self, title, action, subtitle=""):
+    def edit(self, title, action, subtitle="", inherit=False, hide=(), inherited=None):
+        """``inherit``: offer "As in all apps" too, picked as None (``action`` None: it is the one chosen);
+        ``inherited``: what that does, so that Gestures picked then start from those of all apps. ``hide``: preset
+        ids not offered this time."""
+        self._inherited = copy.deepcopy(inherited) if inherit else None
+        self.list.inherit_row.setVisible(inherit)
+        self.list.set_hidden(hide)
         self._action = copy.deepcopy(action)
+        self._slot = None  # a direction or shape being picked for the control before is not one of this one
         self.title.setText(title)
         self.about.set_text(subtitle)
         self.stack.setCurrentIndex(0)
@@ -435,12 +540,26 @@ class ActionPicker(QFrame):
 
     def _refresh(self):
         action = self._action or {}
-        self.list.set_current(action)
+        self.list.set_current(self._action)
         is_gestures = action.get("type") == "gestures"
         self.gesture_block.setVisible(is_gestures)
+        is_spotlight = action.get("type") == "spotlight"
+        self.spotlight_block.setVisible(is_spotlight)
+        if is_spotlight:
+            look = config.spotlight(action)
+            for effect, (row, value) in self._effect_rows.items():
+                state = _("On") if look[effect]["on"] else _("Off")
+                value.setText(state)
+                row.setAccessibleName(f"{_(EFFECT_LABELS[effect])}: {state}")
         if is_gestures:
+            mode = gestures.hold_mode(action)
+            self.mode.blockSignals(True)
+            self.mode.setCurrentIndex(self.mode.findData(mode or "swipes"))
+            self.mode.blockSignals(False)
             for direction, label in self._gesture_rows.items():
                 label.setText(actions.describe(action.get(direction)))
+                self._gesture_buttons[direction].setEnabled(direction == "tap" or not mode)  # pan, zoom: only the tap
+            self.shapes_button.setEnabled(not mode)
             drawn = action.get("shapes") or {}
             self.shapes_value.setText(_("{} with an action").format(len(drawn)) if drawn else _("None yet"))
             if self._shape_icons != theme.REVISION:
@@ -451,13 +570,66 @@ class ActionPicker(QFrame):
                 value.setText(actions.describe(drawn[shape]) if shape in drawn else _("No action"))
 
     def _picked(self, action):
-        if action.get("type") == "gestures":
-            if (self._action or {}).get("type") == "gestures":
+        if action is None:  # "As in all apps"
+            self._action = None
+            self._refresh()
+            self.changed.emit(None)
+            return
+        if action.get("type") in ("gestures", "spotlight"):
+            if (self._action or {}).get("type") == action["type"]:
                 return
-            action = config.default_gestures()
+            if action["type"] == "spotlight":
+                action = config.default_spotlight()
+            elif (self._inherited or {}).get("type") == "gestures":  # an app's own, from those of all apps
+                action = config.app_gestures_action(self._inherited)
+            else:
+                action = config.default_gestures()
         self._action = action
         self._refresh()
         self.changed.emit(copy.deepcopy(action))
+
+    def _mode_picked(self, mode):
+        """Swipes, or pan or zoom while the button is held (gestures.HOLD_MODES): the directions stay saved."""
+        if mode in gestures.HOLD_MODES:
+            self._action["mode"] = mode
+        else:
+            self._action.pop("mode", None)
+        self._refresh()
+        self.changed.emit(copy.deepcopy(self._action))
+
+    def _edit_effect(self, name):
+        """Set up one Spotlight effect of the button."""
+        self._effect = name
+        self._fill_effect()
+        self.stack.setCurrentIndex(4)
+
+    def _fill_effect(self):
+        look = config.spotlight(self._action)
+        effect = look[self._effect]
+        self.effect_title.setText(_(EFFECT_LABELS[self._effect]))
+        self.effect_switch.set_checked_silently(effect["on"])
+        # the one effect left on stays on: a press shows something
+        self.effect_switch.setEnabled(not effect["on"] or sum(look[name]["on"] for name in config.EFFECTS) > 1)
+        self.effect_size.set_value(effect["size"])
+        self.effect_color.set_value(effect["color"])
+        kind = ring.overlay_kind()
+        if self._effect in ring.effects_here(kind):
+            note = _("Shows the screen as it was when you pressed: a still picture, kept in memory until you let go. "
+                     "Not a live magnifier.") if self._effect == "magnify" else ""
+        elif self._effect == "magnify" and kind != ring.X11:
+            note = _("Not available on Wayland desktops.")
+        else:
+            note = _("Not available on this desktop.")
+        self.effect_note.setText(note)
+        self.effect_note.setVisible(bool(note))
+
+    def _effect_changed(self, name, key, value):
+        updated = config.spotlight(self._action)
+        updated[name][key] = value
+        self._action = config.spotlight(updated)
+        self._refresh()
+        self._fill_effect()
+        self.changed.emit(copy.deepcopy(self._action))
 
     def _edit_slot(self, slot):
         """Choose the action for one direction, the tap, or one shape of a gesture button."""
@@ -473,6 +645,8 @@ class ActionPicker(QFrame):
         self.stack.setCurrentIndex(1)
 
     def _sub_picked(self, action):
+        if self._slot is None:  # picked late (a dialog's), after another control came to be edited: not for it
+            return
         if self._slot in gestures.SHAPES:
             drawn = self._action.setdefault("shapes", {})
             if action.get("type") == "none":

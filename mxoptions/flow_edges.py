@@ -20,7 +20,10 @@ button, a gesture or the ring, is the way across.
 Each watcher reports through ``reported``: {"at": True, "edge": ..., "x": ..., "y": ..., "screen":
 [x, y, width, height], "full": bool} when the pointer reaches an edge or has slid along it, and
 {"at": False, "edge": ...} when it leaves. MXOPTIONS_FLOW_EDGES names a watcher to use (or "none")
-instead of the choice made here."""
+instead of the choice made here.
+
+Asked to ``follow``, kwin and poll also tell through ``screen_seen`` which screen of this computer the pointer
+is on, for the tick on switching screens; with Flow off too. Strips cannot: a line hears only of itself."""
 
 import json
 import logging
@@ -44,6 +47,7 @@ SCRIPT_NAME = "mxoptions-flow"
 LAYER_SHELL = "zwlr_layer_shell_v1"
 REACH, LEAVE, SLIDE = 1.5, 6, 8  # px: reaching an edge takes touching it, leaving it a few pixels; a slide worth telling
 POLL_INTERVAL = 16               # ms between two looks at the pointer
+SETTLE_LOOKS = 3                 # looks in a row that must agree before poll tells which screen the pointer is on
 THICKNESS = int(os.environ.get("MXOPTIONS_FLOW_LINE", "1") or 1)  # px of the line along an edge
 CLICK_WITHIN = (0.45, 4)         # a press on a strip is a click to repeat if it ends within this many s and px
 ASIDE_CLICK, ASIDE_SCROLL, ASIDE_HELD = 700, 1200, 2500  # ms a strip stays out of the way after each
@@ -51,9 +55,9 @@ ASIDE_CLICK, ASIDE_SCROLL, ASIDE_HELD = 700, 1200, 2500  # ms a strip stays out 
 # speaks up when the pointer reaches it (the outer edge: one no other screen continues behind), when
 # it slides along it, and when it leaves.
 _EDGE_SCRIPT = """\
-// Loaded by MX Options while Flow is on: says when the pointer rests against an edge of the desktop
-// that another computer is behind.
-var EDGES = %(edges)s, at = {}, last = {};
+// Loaded by MX Options: says when the pointer rests against an edge of the desktop that another
+// computer is behind (EDGES), and which screen the pointer is on (SCREENS).
+var EDGES = %(edges)s, SCREENS = %(screens)s, at = {}, last = {}, shown = "";
 // The screen the pointer is on and how far the pointer is from its EDGE side, if no other screen continues there.
 function probe(pos, EDGE) {
     var screens = workspace.screens;
@@ -76,6 +80,20 @@ function probe(pos, EDGE) {
 function tell(report) {
     callDBus("%(service)s", "%(path)s", "%(interface)s", "Edge", JSON.stringify(report));
 }
+// Screen the pointer is on (first that holds it; null between screens) and all screens, told when either changes.
+function follow(pos) {
+    var screens = workspace.screens, all = [], on = null;
+    for (var i = 0; i < screens.length; i++) {
+        var g = screens[i].geometry;
+        all.push([g.x, g.y, g.width, g.height]);
+        if (on === null && pos.x >= g.x && pos.x < g.x + g.width && pos.y >= g.y && pos.y < g.y + g.height) on = all[i];
+    }
+    var key = JSON.stringify([on, all]);
+    if (key != shown) {
+        shown = key;
+        tell({on: on, screens: all});
+    }
+}
 workspace.cursorPosChanged.connect(function () {
     var pos = workspace.cursorPos;
     for (var k = 0; k < EDGES.length; k++) {
@@ -97,6 +115,7 @@ workspace.cursorPosChanged.connect(function () {
             tell({at: false, edge: EDGE});
         }
     }
+    if (SCREENS) follow(pos);
 });
 """
 
@@ -132,9 +151,11 @@ def _screens():
 class Watcher(QObject):
     reported = Signal(object)  # a report, as set out at the top
     changed = Signal()         # whether the edges are watched has changed by itself
+    screen_seen = Signal(object, object)  # (screen or None, all screens) as tuples, when either changes, while following
 
     name = ""
     takes_clicks = False       # a line along the edge is in the way of clicks there
+    follows_screens = False    # can tell which screen the pointer is on
 
     def __init__(self, parent=None, click=None, scroll=None):
         super().__init__(parent)
@@ -146,7 +167,11 @@ class Watcher(QObject):
         cannot tell the service those things itself keeps to them."""
         raise NotImplementedError
 
+    def follow(self, on):
+        """Tell (True) or stop telling (False) through screen_seen which screen the pointer is on."""
+
     def close(self):
+        self.follow(False)
         self.watch(frozenset())
 
 
@@ -163,12 +188,15 @@ class _EdgeSink(QObject):
 
 class KWin(Watcher):
     name = "kwin"
+    follows_screens = True
+    _NOTHING = (frozenset(), False)
 
     def __init__(self, parent=None, click=None, scroll=None):
         super().__init__(parent)
-        self._edges = frozenset()   # what KWin watches for us
-        self._wanted = frozenset()
+        self._loaded = self._NOTHING  # (edges, follow) KWin runs the script for
+        self._wanted = self._NOTHING
         self._exported = False
+        self._folder = None           # tempfile.TemporaryDirectory of the script: this program's alone, made when needed
         self._sink = _EdgeSink(self)
         self._sink.reached.connect(self._heard)
         watcher = QDBusServiceWatcher(KWIN, QDBusConnection.sessionBus(), QDBusServiceWatcher.WatchModeFlag.WatchForRegistration, self)
@@ -179,7 +207,13 @@ class KWin(Watcher):
             data = json.loads(report)
         except ValueError:
             return
-        if isinstance(data, dict):
+        if not isinstance(data, dict):
+            return
+        if "screens" in data:
+            seen = flow.screen_report(data) if self._wanted[1] else None  # not followed now: an old word, dropped
+            if seen is not None:
+                self.screen_seen.emit(*seen)
+        else:
             self.reported.emit(data)
 
     def _export(self, wanted):
@@ -197,22 +231,38 @@ class KWin(Watcher):
         return self._exported
 
     def watch(self, edges, corner=0.0, fullscreen=False):
-        self._wanted = edges
-        if edges == self._edges:
-            return
-        if self._edges:
-            _kwin("unloadScript", SCRIPT_NAME)
-            self._edges = frozenset()
+        self._load(frozenset(edges), self._wanted[1])
+
+    def follow(self, on):
+        self._load(self._wanted[0], bool(on))
+
+    def _load(self, edges, follow):
+        """Have KWin run the script for these edges and for following the screens; for neither, none of it."""
+        self._wanted = (edges, follow)
+        if not edges and not follow:
+            # Before any shortcut: an attempt that failed half way may have left this program on the bus.
+            if self._loaded != self._NOTHING or self._exported:
+                _kwin("unloadScript", SCRIPT_NAME)
+            self._loaded = self._NOTHING
             self.watching = False
-        if not edges:
             self._export(False)
             return
+        if self._wanted == self._loaded:
+            return
+        before = self._loaded
+        if before != self._NOTHING:
+            _kwin("unloadScript", SCRIPT_NAME)
+            self._loaded = self._NOTHING
+            self.watching = False
         if not self._export(True) or not kwin_running():
             return
-        path = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir(), SCRIPT_NAME + ".js")
         try:
+            if self._folder is None:
+                self._folder = tempfile.TemporaryDirectory(prefix=SCRIPT_NAME + "-")
+            path = os.path.join(self._folder.name, SCRIPT_NAME + ".js")
             with open(path, "w") as f:
-                f.write(_EDGE_SCRIPT % {"edges": json.dumps(sorted(edges)), "service": SERVICE, "path": PATH, "interface": INTERFACE})
+                f.write(_EDGE_SCRIPT % {"edges": json.dumps(sorted(edges)), "screens": json.dumps(follow), "service": SERVICE,
+                                        "path": PATH, "interface": INTERFACE})
         except OSError as e:
             log.warning("flow: could not write the edge script: %s", e)
             return
@@ -222,27 +272,40 @@ class KWin(Watcher):
             log.warning("flow: KWin did not take the edge script")
             return
         _kwin("start")  # runs what is loaded and not running yet
-        self._edges = edges
-        self.watching = True
-        log.info("flow: KWin watches the %s edge", " and the ".join(sorted(edges)))
+        self._loaded = (edges, follow)
+        self.watching = bool(edges)
+        if edges:
+            log.info("flow: KWin watches the %s edge", " and the ".join(sorted(edges)))
+        if follow and not before[1]:
+            log.info("flow: KWin says which screen the pointer is on")
 
     def _started(self):
         """KWin came up (again): what it had loaded for us is gone."""
-        self._edges = frozenset()
+        self._loaded = self._NOTHING
         self.watching = False
-        if self._wanted:
-            self.watch(self._wanted)
+        if self._wanted != self._NOTHING:
+            self._load(*self._wanted)
         self.changed.emit()
+
+    def close(self):
+        self._load(frozenset(), False)  # both at once: no reload for the edges alone on the way
+        if self._folder is not None:
+            self._folder.cleanup()
+            self._folder = None
 
 
 class Poll(Watcher):
     name = "poll"
+    follows_screens = True
 
     def __init__(self, parent=None, click=None, scroll=None):
         super().__init__(parent)
         self._edges = frozenset()
         self._at = {}    # edge -> the pointer rests against it
         self._last = {}  # edge -> where along it the pointer was when that was last told
+        self._follow = False
+        self._seen = (None, 0)  # (screen, screens) of the last look, and how many looks in a row saw it
+        self._told = None       # (screen, screens) told last through screen_seen
         self._timer = QTimer(self, interval=POLL_INTERVAL)
         self._timer.timeout.connect(self._look)
 
@@ -252,9 +315,22 @@ class Poll(Watcher):
         self._edges = edges
         self._at.clear()
         self.watching = bool(edges)
+        self._sync()
         if edges:
-            self._timer.start()
             log.info("flow: asking the system where the pointer is, for the %s edge", " and the ".join(sorted(edges)))
+
+    def follow(self, on):
+        on = bool(on)
+        if on == self._follow:
+            return
+        self._follow, self._seen, self._told = on, (None, 0), None
+        self._sync()
+        if on:
+            log.info("flow: asking the system where the pointer is, for the screen it is on")
+
+    def _sync(self):
+        if self._edges or self._follow:
+            self._timer.start()
         else:
             self._timer.stop()
 
@@ -274,6 +350,14 @@ class Poll(Watcher):
             elif self._at.get(edge):
                 self._at[edge] = False
                 self.reported.emit({"at": False, "edge": edge})
+        if self._follow:
+            # Told once SETTLE_LOOKS looks agree: the system may move the pointer before Qt knows of new screens.
+            answer = (flow.screen_at(pos, screens), tuple(tuple(screen) for screen in screens))
+            count = self._seen[1] + 1 if answer == self._seen[0] else 1
+            self._seen = (answer, count)
+            if count >= SETTLE_LOOKS and answer != self._told:
+                self._told = answer
+                self.screen_seen.emit(*answer)
 
 
 def strip_places(edges, screens, corner):

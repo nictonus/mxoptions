@@ -14,7 +14,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from . import APP_ID, APP_NAME, __version__, config, desktop, device, i18n, paths
+from . import APP_ID, APP_NAME, __version__, config, desktop, device, i18n, keyboard, paths
 from .engine import Engine, Listener
 from .i18n import _
 
@@ -26,9 +26,10 @@ class Bridge(QObject, Listener):
 
     state = Signal(object)
     seeded = Signal(object)
-    ring = Signal(str)
+    ring = Signal(str, object, object)
     pressed = Signal(object)
     ring_turn = Signal(float)
+    effect = Signal(str, object)
     gesture = Signal(object)
     event = Signal(str, object)
 
@@ -38,14 +39,17 @@ class Bridge(QObject, Listener):
     def on_config(self, cfg):
         self.seeded.emit(cfg)
 
-    def on_ring(self, event):
-        self.ring.emit(event)
+    def on_ring(self, event, session=None, bubbles=None):
+        self.ring.emit(event, session, bubbles)
 
     def on_pressed(self, keys):
         self.pressed.emit(keys)
 
     def on_ring_turn(self, clicks):
         self.ring_turn.emit(clicks)
+
+    def on_effect(self, event, look=None):
+        self.effect.emit(event, look)
 
     def on_gesture(self, event):
         self.gesture.emit(event)
@@ -108,15 +112,66 @@ def _ask_running_instance(name, arguments):
     return 0 if done else 2
 
 
-def _tray_tooltip(state):
-    if not state["connected"]:
-        return f"{APP_NAME} — {_('Not connected')}"
-    text = state["name"]
-    if state.get("battery"):
-        text += f" — {state['battery'][0]}%"
-        if state["battery"][1] in (device.BATTERY_CHARGING, device.BATTERY_ALMOST_FULL, device.BATTERY_SLOW_CHARGE):
+def _device_line(found):
+    text = found["name"]
+    if found.get("battery"):
+        text += f" — {found['battery'][0]}%"
+        if found["battery"][1] in (device.BATTERY_CHARGING, device.BATTERY_ALMOST_FULL, device.BATTERY_SLOW_CHARGE):
             text += f" ({_('charging')})"
     return text
+
+
+def _tray_tooltip(state):
+    found = state.get("keyboard")
+    second = "\n" + _device_line(found) if found and found["connected"] else ""
+    if not state["connected"]:
+        return f"{APP_NAME} — {_('Not connected')}" + second
+    return _device_line(state) + second
+
+
+LOCK_TITLES = {"caps_lock": "Caps Lock", "num_lock": "Num Lock", "scroll_lock": "Scroll Lock"}  # keycap names: as they are
+
+
+def notice_message(notice):
+    """What the tray says of one notice of the keyboard's (keyboard.new_notice), or None for one not known here."""
+    kind = notice.get("kind")
+    if kind == "backlight":
+        return _("Keyboard backlight: level {level} of {top}").format(level=notice["level"], top=notice["top"])
+    if kind == "fn" and type(notice.get("value")) is bool:
+        return _("Fn lock on: the top row gives F1–F12") if notice["value"] else _(
+            "Fn lock off: the top row gives its other functions")
+    keys = notice.get("keys") if kind == "locks" else None
+    if not isinstance(keys, dict) or not keys or not all(name in LOCK_TITLES for name in keys):
+        return None
+    return ", ".join((_("{key} on") if on else _("{key} off")).format(key=LOCK_TITLES[name]) for name, on in keys.items())
+
+
+def tray_messages(armed, seen, found):
+    """What the tray says of one state of the keyboard (``found``, or None): (armed, seen, [(text, "info" or
+    "warning")]), the newest notice first and a low battery last, so that a notice never takes the warning's place.
+    ``armed``: see keyboard.low_battery; ``seen``: see keyboard.new_notice."""
+    armed, low = keyboard.low_battery(armed, found.get("battery") if found and found["connected"] else None)
+    seen, notice = keyboard.new_notice(seen, found)
+    text = notice_message(notice) if notice else None
+    messages = [(text, "info")] if text else []
+    if low:
+        messages.append((_("The battery of {name} is low ({percent}%). Charge it soon.").format(
+            name=found["name"], percent=found["battery"][0]), "warning"))
+    return armed, seen, messages
+
+
+def mouse_messages(armed, state, messages):
+    """``messages`` (tray_messages) with a low battery of the mouse (``state``, the engine's) added, said as
+    keyboard.low_battery says it of the keyboard, with an ``armed`` of its own; a percent of 0 tells no level.
+    Both low at once: one warning of both, so that neither takes the other's place. Returns (armed, messages)."""
+    battery = state.get("battery") if state.get("connected") else None
+    armed, low = keyboard.low_battery(armed, battery if battery and battery[0] else None)
+    if not low:
+        return armed, messages
+    line = _("The battery of {name} is low ({percent}%). Charge it soon.").format(name=state["name"], percent=battery[0])
+    if messages and messages[-1][1] == "warning":
+        return armed, messages[:-1] + [(messages[-1][0] + "\n" + line, "warning")]
+    return armed, messages + [(line, "warning")]
 
 
 def main(argv=None):
@@ -169,7 +224,7 @@ def main(argv=None):
             time.sleep(0.2)
         log.warning("the service did not come up; running without it")
 
-    from . import api, flow_service
+    from . import api, flow_service, front
     from .ui import editors, ring, theme, tray_icon
     from .ui.main_window import MainWindow
     from .ui.sounds import WheelSounds
@@ -193,6 +248,7 @@ def main(argv=None):
     sounds.configure(cfg["wheel_click"])
     store = Store(cfg, engine, sounds)
     store.flow = flow_service.FlowService(store, app)
+    store.front = front.Front(engine, app)
     bridge.state.connect(store.update_state)
     bridge.seeded.connect(lambda seeded: store.replace(seeded, push=False))
     bridge.pressed.connect(store.pressed_changed)
@@ -218,6 +274,7 @@ def main(argv=None):
             overlay.configure(applied["ring"])
         sounds.configure(store.cfg["wheel_click"])
         service.set_enabled(store.cfg["app"]["api"])
+        store.front.want("profiles", bool(store.cfg["keyboard"]["profiles"] or store.cfg["mouse"]["profiles"]))
 
     def engine_event(kind, payload):
         if kind == "wheel_mode":
@@ -231,8 +288,9 @@ def main(argv=None):
     store.changed.connect(config_changed)
     bridge.ring.connect(overlay.handle)
     bridge.ring_turn.connect(overlay.turn)
+    bridge.effect.connect(overlay.effect)
     overlay.opened.connect(engine.set_ring_open)
-    overlay.triggered.connect(engine.trigger_action)
+    overlay.triggered.connect(engine.ring_action)
     overlay.cue.connect(engine.feedback)
 
     # Started in the background (the service does that) the program keeps running without a window:
@@ -242,6 +300,7 @@ def main(argv=None):
     window = MainWindow(store, hide_on_close=stays)
     service = api.Service(store, overlay, window.show_and_raise, app)
     service.set_enabled(cfg["app"]["api"])
+    store.front.want("profiles", bool(cfg["keyboard"]["profiles"] or cfg["mouse"]["profiles"]))
     bridge.event.connect(engine_event)
     app.setQuitOnLastWindowClosed(not stays)
 
@@ -297,9 +356,17 @@ def main(argv=None):
         if reason == QSystemTrayIcon.ActivationReason.Trigger else None
     )
 
+    low = {"armed": True, "mouse": True}
+    shown = {"notice": 0}  # the number of the last notice of a change the keyboard reported that was said
+
     def tray_state(state):
         tray.setToolTip(_tray_tooltip(state))
         tray_look()
+        low["armed"], shown["notice"], messages = tray_messages(low["armed"], shown["notice"], state.get("keyboard"))
+        low["mouse"], messages = mouse_messages(low["mouse"], state, messages)
+        for text, kind in messages if tray.isVisible() else ():  # hidden: said to no one, and not said later either
+            tray.showMessage(APP_NAME, text, QSystemTrayIcon.MessageIcon.Warning if kind == "warning"
+                             else QSystemTrayIcon.MessageIcon.Information)
 
     store.state_changed.connect(tray_state)
 
@@ -321,6 +388,7 @@ def main(argv=None):
         if hasattr(overlay, "shutdown"):  # it lives in a program of its own: that one ends with this one
             overlay.shutdown()
         store.flow.close()
+        store.front.close()
         store.flush()
         engine.stop()
 

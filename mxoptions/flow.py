@@ -15,6 +15,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import secrets
 import socket
 import ssl
@@ -48,6 +49,8 @@ PROGRESS_INTERVAL = 0.5           # s between two reports of how far a file tran
 BLOB_TIMEOUT = 60.0               # s such a piece may take to arrive
 HERE_INTERVAL = 4.0               # s between two "here I am" calls while the other computer is being looked for
 OFFER_INTERVAL = 1.5              # s between two announcements of a pairing code on show
+SCREEN_CUE_GAP = 0.3              # s: least time between two ticks for pointer going onto another screen (knob, not measured)
+MAX_SCREENS = 16                  # most screens one watcher report may list
 BEACON_AGE = 120                  # s a "here I am" may be old (clocks differ; replaying one gains nothing)
 _APP = "mxoptions-flow"
 # Both ends prove they hold the pairing key during the TLS handshake, with fresh keys for every
@@ -221,6 +224,65 @@ def bounds(screens):
     return left, top, max(s[0] + s[2] for s in screens) - left, max(s[1] + s[3] for s in screens) - top
 
 
+def screen_at(pos, screens):
+    """First of ``screens`` (x, y, width, height) that holds point ``pos``, as tuple; None between them or off all."""
+    return next((tuple(screen) for screen in screens if _holds(screen, pos)), None)
+
+
+def _rect(value):
+    """``value`` as (x, y, width, height) if list of four finite numbers with width and height above 0, else None."""
+    if not isinstance(value, list) or len(value) != 4 or any(type(item) not in (int, float) for item in value):
+        return None
+    try:
+        if not all(math.isfinite(item) for item in value):
+            return None
+    except OverflowError:  # integer too big for float: JSON allows any number of digits
+        return None
+    return tuple(value) if value[2] > 0 and value[3] > 0 else None
+
+
+def screen_report(data):
+    """(screen, screens) of watcher report {"on": [x, y, w, h] or None, "screens": [[x, y, w, h], ...]}: screen tuple
+    or None, screens tuple of tuples. None for anything else, as when another program made it up."""
+    listed = data.get("screens") if isinstance(data, dict) else None
+    if not isinstance(listed, list) or not 0 < len(listed) <= MAX_SCREENS:
+        return None
+    screens = tuple(_rect(item) for item in listed)
+    if None in screens:
+        return None
+    if data.get("on") is None:
+        return None, screens
+    screen = _rect(data["on"])
+    return (screen, screens) if screen in screens else None
+
+
+class ScreenCrossings:
+    """Whether pointer went onto another screen, from what watcher says: screen it is on (None: on none) and all
+    screens. First word, and first after screens changed, only say where it is."""
+
+    def __init__(self):
+        self.screen = self.screens = None
+        self.ticked = float("-inf")
+
+    def reset(self):
+        self.screen = self.screens = None
+
+    def step(self, screen, screens, now):
+        """True when pointer has gone onto another screen and tick is due (SCREEN_CUE_GAP since last one)."""
+        if screen is None:
+            return False
+        if self.screen is None or screens != self.screens:
+            self.screen, self.screens = screen, screens
+            return False
+        if screen == self.screen:
+            return False
+        self.screen = screen
+        if now - self.ticked < SCREEN_CUE_GAP:
+            return False
+        self.ticked = now
+        return True
+
+
 def entry_point(edge, fraction, screens, inset=ENTRY_INSET):
     """Where the pointer comes in through ``edge`` of the desktop made of ``screens``, ``fraction`` of
     the way along the screens that form that edge. A little inside, so that arriving does not at once
@@ -322,6 +384,7 @@ class _Connection:
         self.heard = time.monotonic()  # when the other side last said anything
         self.quiet = False             # it has not answered for a while
         self.port = None               # where the other side listens, as it said in its hello
+        self.admit = None              # Link._admit[pair] when it was let in: once that is gone, nothing more is taken from it
 
     def send(self, message, data=None):
         """One message; ``data`` (bytes) rides behind it as it is, announced by "n"."""
@@ -387,6 +450,7 @@ class Link:
         "status"        its status changed
         "message"       anything else it sent, as a dict with "t" naming what it is ("data": bytes that came with it)
         "down"          the link is gone
+        "mark"          the number given to configure(): everything said before it was said before those settings
         "quiet"         True: that computer has not answered for a while (the network stalls, or it sleeps); False: it is back
         "problem"       text: why this computer cannot listen ("" once it can)
         "files-coming"  files are on their way here: {"count", "total"}
@@ -408,8 +472,10 @@ class Link:
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._run, name="flow", daemon=True)
         self._server = None
+        self._listener = None       # the task opening the port, until it listens there or cannot
         self._dialers = {}          # pair -> the task that keeps calling that computer
         self._conns = {}            # pair -> the connection in use
+        self._admit = {}            # pair -> token: the same while that computer stays linked here, new when it comes back
         self._closing = False
         self._found = {}            # pair -> (address, port) a signed "here I am" came from
         self._udp = None
@@ -421,6 +487,7 @@ class Link:
         self._receive_limit = None  # bytes of files accepted in one go (None: none)
         self._outgoing = None       # files offered and not yet sent: {"id", "items", "sources"}
         self._sending = None        # the task that sends them, on a connection of its own
+        self._sending_to = ""       # the pairing whose computer they are sent to
         self._arriving = None       # the connection files are arriving on
         self._promised = ""         # the pairing whose computer was told it may send files
 
@@ -434,14 +501,15 @@ class Link:
             self._loop.call_soon_threadsafe(self._shutdown)
             self._thread.join(timeout=3.0)
 
-    def configure(self, peers=None, port=PORT, peer=""):
+    def configure(self, peers=None, port=PORT, peer="", mark=None):
         """Switch the link on for these other computers, [{"key", "address"}], or off (none). For a
-        single one its key may be given as it is, with its address as ``peer``."""
+        single one its key may be given as it is, with its address as ``peer``. With ``mark``, a "mark" event
+        carrying it comes before anything said under these settings."""
         if isinstance(peers, str):
             peers = [{"key": peers, "address": peer}]
         entries = tuple((pair_id(entry["key"]), entry["key"], str(entry.get("address") or "").strip())
                         for entry in (peers or []) if key_usable(entry.get("key") or ""))
-        self._call(self._apply, (int(port), entries) if entries and supported() else None)
+        self._call(self._apply, (int(port), entries) if entries and supported() else None, mark)
 
     def set_status(self, status, per_pair=None):
         """What the other computers should know about this one, and (``per_pair``: {pair: more}) what only
@@ -461,9 +529,14 @@ class Link:
         if not given), if it will have them."""
         self._call(self._offer_files, list(items), list(sources), pair)
 
-    def cancel_files(self):
-        """Give up the file transfer in progress, whichever way it is going."""
-        self._call(self._cancel_files)
+    def cancel_files(self, pairs=None):
+        """Give up the file transfer in progress, whichever way it is going; with ``pairs``, only one with the
+        computers of those pairings."""
+        self._call(self._cancel_files, None if pairs is None else frozenset(pairs))
+
+    def discard_files(self, paths):
+        """Remove files that arrived ("files") and will not be pasted after all."""
+        self._call(self._receiver.discard, list(paths))
 
     def watch_offers(self, wanted):
         """Report computers nearby that show a pairing code ("offer" events)."""
@@ -521,24 +594,31 @@ class Link:
         for dialer in self._dialers.values():
             dialer.cancel()
         self._dialers = {}
+        if self._listener is not None:  # it holds no socket yet: see _listen
+            self._listener.cancel()
+            self._listener = None
         if self._server is not None:
             self._server.close()
             self._server = None
         for conn in list(self._conns.values()):
             conn.close()
 
-    def _apply(self, settings):
+    def _apply(self, settings, mark=None):
+        if mark is not None:  # first: whatever the link said before this, it said before these settings
+            self._emit("mark", mark)
         if settings == self._settings:
             return
         self._teardown()
         self._settings = settings
         self._keys = {pair: key for pair, key, _address in settings[1]} if settings else {}
+        # A computer taken out loses its token, and with it every call it still has, replaced ones too.
+        self._admit = {pair: self._admit.get(pair) or object() for pair in self._keys}
         self._found = {}
         self._sync_udp()
         if settings is None:
             return
         port, entries = settings
-        self._loop.create_task(self._listen(port))
+        self._listener = self._loop.create_task(self._listen(port))
         for pair, key, address in entries:
             self._dialers[pair] = self._loop.create_task(self._dial(pair, key, port, address))
 
@@ -561,21 +641,24 @@ class Link:
                 log.debug("flow: could not send: %s", e)
 
     async def _listen(self, port):
-        settings = self._settings
         try:
+            # Not serving yet, start_server binds and returns with no wait in between: until the socket is
+            # self._server's, this task has none, and _teardown may cancel it. (Serving at once, it would
+            # wait after binding, and a cancelled start_server keeps the socket it bound, listening.)
             server = await asyncio.start_server(
                 lambda reader, writer: self._session(reader, writer, dialed=False), host=None, port=port,
-                ssl=_context(self._keys, server=True), ssl_handshake_timeout=HANDSHAKE, limit=MAX_LINE)
+                ssl=_context(self._keys, server=True), ssl_handshake_timeout=HANDSHAKE, limit=MAX_LINE,
+                start_serving=False)
+            self._listener, self._server = None, server  # ours from here on: _teardown closes it
+            await server.start_serving()
         except (OSError, ssl.SSLError) as e:
+            self._listener = None
             log.warning("flow: cannot listen on port %d: %s", port, e)
             self._emit("problem", str(e))
             return
-        if settings is not self._settings:  # reconfigured while the port was being opened
-            server.close()
-            return
-        self._server = server
-        self._emit("problem", "")
-        log.info("flow: listening on port %d", port)
+        if self._server is server:  # not closed by new settings while serving began
+            self._emit("problem", "")
+            log.info("flow: listening on port %d", port)
 
     async def _dial(self, pair, key, port, address):
         given = split_address(address, port) if address else None
@@ -636,6 +719,7 @@ class Link:
             conn.dialer = self.id if dialed else str(hello.get("id"))
             port = hello.get("port")
             conn.port = port if isinstance(port, int) and not isinstance(port, bool) and 0 < port < 65536 else None
+            conn.admit = self._admit[pair]
             if not self._adopt(conn):
                 return
             log.info("flow: linked with %s", hello.get("name") or "the other computer")
@@ -644,6 +728,8 @@ class Link:
                 try:
                     message = await asyncio.wait_for(conn.read(), PING_INTERVAL)
                 except asyncio.TimeoutError:
+                    if self._revoked(conn):
+                        return
                     silent = time.monotonic() - conn.heard
                     if silent > DEAD_AFTER:
                         log.info("flow: the other computer went silent")
@@ -654,11 +740,15 @@ class Link:
                         self._emit("quiet", True, pair)
                     conn.send({"t": "ping"})
                     continue
+                if self._revoked(conn):
+                    return  # what was still on its way from a computer taken out since is not taken
                 if conn.quiet:
                     conn.quiet = False
                     log.info("flow: the other computer answers again")
                     self._emit("quiet", False, pair)
                 data = await conn.read_data(message)  # never cut short: what follows would make no sense
+                if self._revoked(conn):
+                    return
                 kind = message.get("t")
                 if kind == "ping":
                     conn.send({"t": "pong"})
@@ -685,6 +775,10 @@ class Link:
                     self._outgoing = None
                 log.info("flow: link down")
                 self._emit("down", None, conn.pair)
+
+    def _revoked(self, conn):
+        """Its computer has been taken out here (paused, forgotten, Flow off) since this call was let in."""
+        return self._admit.get(conn.pair) is not conn.admit
 
     def _hello(self, pair):
         settings = self._settings
@@ -749,6 +843,8 @@ class Link:
             while True:
                 message = await asyncio.wait_for(conn.read(), STREAM_TIMEOUT)
                 data = await conn.read_data(message)
+                if conn.cancelled:
+                    break  # given up here: nothing more of it is taken, not even its end
                 kind = message.get("t")
                 if kind == "chunk":
                     self._receiver.chunk(transfer, message.get("i"), data)
@@ -759,10 +855,10 @@ class Link:
                                                       "count": self._receiver.count, "sending": False}, conn.pair)
                 elif kind == "files-end":
                     arrived = self._receiver.end(transfer)
+                    log.info("flow: %d file(s) arrived, %d bytes", arrived["count"], arrived["total"])
+                    self._emit("files", arrived, conn.pair)  # in place: said before anything else can happen here
                     conn.send({"t": "files-got"})
                     await conn.writer.drain()
-                    log.info("flow: %d file(s) arrived, %d bytes", arrived["count"], arrived["total"])
-                    self._emit("files", arrived, conn.pair)
                     return
                 else:  # the sender gave up
                     why = "cancelled"
@@ -824,6 +920,7 @@ class Link:
         if conn.pair not in self._keys or not peer or not conn.port:
             self._emit("files-refused", "failed", conn.pair)
             return
+        self._sending_to = conn.pair
         self._sending = self._loop.create_task(self._send_files(peer[0], conn.port, conn.pair, outgoing))
 
     async def _send_files(self, address, port, pair, outgoing):
@@ -878,13 +975,16 @@ class Link:
             writer.close()
         self._emit("files-refused", why, pair)
 
-    def _cancel_files(self):
-        if self._sending is not None:
+    def _cancel_files(self, pairs=None):
+        def mine(pair):
+            return pairs is None or pair in pairs
+        if self._sending is not None and mine(self._sending_to):
             self._sending.cancel()
         if self._arriving is not None:
-            self._arriving.cancelled = True
-            self._arriving.close()  # the loop reading from it ends, and what arrived so far is dropped
-        elif self._receiver.busy:
+            if mine(self._arriving.pair):
+                self._arriving.cancelled = True
+                self._arriving.close()  # the loop reading from it ends, and what arrived so far is dropped
+        elif self._receiver.busy and mine(self._promised):
             self._receiver.abort()
             self._emit("files-declined", "cancelled", self._promised)
 

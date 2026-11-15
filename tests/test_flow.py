@@ -1,6 +1,10 @@
 """Flow: the pairing key, the geometry of crossing from one desktop to another, the link between
 two computers (here: two links on this one), and the engine's part in handing the mouse over."""
 
+import asyncio
+import copy
+import ctypes
+import gc
 import json
 import os
 import queue
@@ -8,11 +12,17 @@ import shutil
 import socket
 import sys
 import tempfile
+import threading
 import time
+import types
 import unittest
+import warnings
+from unittest import mock
 
 from tests.support import make_engine
 from mxoptions import engine as engine_module, flow, flow_files, hidpp
+import mxoptions
+from mxoptions import environment, x11
 
 KEY = "ABCD-EFGH-IJKL-MNOP"
 
@@ -520,6 +530,471 @@ class Files(TwoComputers):
         self.desk.link.offer_files(*flow_files.collect([os.path.join(source, "notes.txt")], 1024 * 1024))
         self.assertEqual(self.desk.expect("files-refused"), "off")
 
+    def test_giving_up_another_computer_s_transfer_leaves_this_one_alone(self):
+        self.connect()
+        self.slow(self.laptop)
+        self.laptop.link.accept_files(4 * 1024 ** 3)
+        self.desk.link.offer_files(*flow_files.collect([self.big()], 4 * 1024 ** 3))
+        self.desk.expect("files-progress")
+        self.desk.link.cancel_files([flow.pair_id(OTHER_KEY)])  # a computer these files are not going to
+        self.assertTrue(self.desk.quiet("files-refused", 0.5))
+        self.desk.link.cancel_files([flow.pair_id(KEY)])
+        self.assertEqual(self.desk.expect("files-refused"), "cancelled")
+        self.assertEqual(self.laptop.expect("files-declined"), "cancelled")
+        self.assertEqual(self.arrived_folders(), [])
+
+    def test_the_receiver_gives_up_only_that_computer_s_transfer(self):
+        self.connect()
+        self.slow(self.laptop)
+        self.laptop.link.accept_files(4 * 1024 ** 3)
+        self.desk.link.offer_files(*flow_files.collect([self.big()], 4 * 1024 ** 3))
+        self.laptop.expect("files-progress")
+        self.laptop.link.cancel_files([flow.pair_id(OTHER_KEY)])
+        self.assertTrue(self.laptop.quiet("files-declined", 0.5))
+        self.laptop.link.cancel_files([flow.pair_id(KEY)])
+        self.assertEqual(self.laptop.expect("files-declined"), "cancelled")
+        self.assertEqual(self.desk.expect("files-refused"), "failed")
+        self.assertEqual(self.arrived_folders(), [])
+
+    def one_mebibyte(self):
+        """A file too large to go along with the offer: it travels on a connection of its own, in 16 pieces."""
+        path = os.path.join(self.folder, "one.bin")
+        with open(path, "wb") as f:
+            f.write(os.urandom(1024 * 1024))
+        return path
+
+    def test_a_transfer_given_up_takes_nothing_more_that_was_on_its_way(self):
+        self.connect()
+        link = self.laptop.link
+        receiver, take = link._receiver, link._receiver.chunk
+
+        def chunk(*args):  # the last piece is written; its end is on its way or here already
+            took = take(*args)
+            if receiver.done == receiver.total:
+                conn = link._arriving
+                link._cancel_files()
+                conn.reader.feed_data(b'{"t":"files-end"}\n')  # read off the socket before it was closed, not acted on
+            return took
+
+        receiver.chunk = chunk
+        link.accept_files(4 * 1024 * 1024)
+        self.desk.link.offer_files(*flow_files.collect([self.one_mebibyte()], 4 * 1024 * 1024))
+        self.assertEqual(self.laptop.expect("files-declined", timeout=15), "cancelled")
+        self.assertTrue(self.laptop.quiet("files", 0.5))
+        self.assertEqual(self.arrived_folders(), [])
+
+    def test_files_in_place_are_said_before_the_answer_goes(self):
+        self.connect()
+        link, said, told = self.laptop.link, [], []
+        hear, receive = link._on_event, link._receive_files
+
+        def on_event(kind, payload, pair=""):
+            said.append(kind)
+            hear(kind, payload, pair)
+
+        async def receive_files(conn, hello):
+            send = conn.send
+
+            def answer(message, data=None):
+                if message.get("t") == "files-got":
+                    told.append("files" in said)
+                send(message, data)
+
+            conn.send = answer
+            await receive(conn, hello)
+
+        link._on_event, link._receive_files = on_event, receive_files
+        link.accept_files(4 * 1024 * 1024)
+        self.desk.link.offer_files(*flow_files.collect([self.one_mebibyte()], 4 * 1024 * 1024))
+        self.laptop.expect("files", timeout=15)
+        self.assertEqual(told, [True])
+
+
+def on_link(link, function):
+    """Run ``function`` on the link's own thread, between two of its steps, and return what it gives."""
+    done = queue.Queue()
+    link._call(lambda: done.put(function()))
+    return done.get(timeout=5)
+
+
+class Held:
+    """A call whose reading is held: from now on it is given only the lines put in ``lines`` (an exception there is
+    raised instead), and only once let go. Its connection and what the other side sends on it are left alone: lines
+    that were on their way and not yet acted on. Used on the link's own thread, through on_link."""
+
+    def __init__(self, conn):
+        self.lines = []
+        self.reading = threading.Event()  # set once the call waits for its next line here
+        self._go = asyncio.Event()
+        conn.read = self.read
+
+    def let_go(self, *lines):
+        self.lines.extend(lines)
+        self._go.set()
+
+    async def read(self):
+        self.reading.set()
+        while True:
+            await self._go.wait()
+            if self.lines:
+                line = self.lines.pop(0)
+                if isinstance(line, BaseException):
+                    raise line
+                return line
+            self._go.clear()
+
+
+class HeldData:
+    """A call whose bytes behind a message are read as they come and then held until let go: the message has been
+    read, what rides behind it is in, and the call waits for it. Used on the link's own thread, but ``reached``."""
+
+    def __init__(self, conn):
+        self.reached = queue.Queue()  # the message whose bytes are held, as soon as they are
+        self._go = asyncio.Event()
+        self._read_data = conn.read_data
+        conn.read_data = self.read_data
+
+    def let_go(self):
+        self._go.set()
+
+    async def read_data(self, message):
+        data = await self._read_data(message)
+        if data:
+            self.reached.put(dict(message))
+            await self._go.wait()
+        return data
+
+
+STALE = [{"t": "status", "name": "stale", "channel": 9, "present": True}, {"t": "clipboard", "text": "stale"},
+         {"t": "files", "id": "stale1", "items": [{"path": "d", "dir": True}], "inline": True},
+         {"t": "files", "id": "stale2", "items": [{"path": "a.txt", "size": 3}]}]
+
+
+@unittest.skipUnless(flow.supported(), "this Python has no pre-shared keys for TLS")
+class TakenOut(TwoComputers):
+    """The desk takes the laptop out (pause, forget, Flow off) while a call of the laptop still has words on their
+    way: nothing of them is taken, whenever they come, not even once the laptop is back. Only the laptop calls here,
+    so that the desk's end of every call is one it was called on, which outlives the desk's own calling."""
+
+    def setUp(self):
+        super().setUp()
+        for name, value in (("PING_INTERVAL", 60.0), ("broadcast_addresses", lambda: [])):  # no "are you there" in the middle
+            self.addCleanup(setattr, flow, name, getattr(flow, name))
+            setattr(flow, name, value)
+        self.pair = flow.pair_id(KEY)
+
+    def call(self):
+        """The call in use at the desk, which the laptop made."""
+        conn = on_link(self.desk.link, lambda: self.desk.link._conns[self.pair])
+        self.assertFalse(conn.dialed)
+        return conn
+
+    def take_out(self, mark):
+        """The desk takes the laptop out and has it back at once, as a pause and a resume do."""
+        self.desk.link.configure(None)
+        self.desk.link.configure(KEY, self.desk.port, "", mark=mark)
+        self.assertEqual(self.desk.expect("mark"), mark)
+        self.desk.expect("up")  # the laptop has called again: the call in use is a new one
+
+    def keep(self):
+        """The desk changes its settings but keeps the laptop, as when the address or another computer changes."""
+        self.desk.link.configure(KEY, self.desk.port, "127.0.0.1:1")
+
+    def heard(self, for_=1.0):
+        """Everything the desk hears for a while, as (kind, payload)."""
+        found, deadline = [], time.monotonic() + for_
+        while time.monotonic() < deadline:
+            try:
+                found.append(self.desk.heard.get(timeout=0.05))
+            except queue.Empty:
+                pass
+        return found
+
+    def held(self, conn):
+        """Hold the reading of ``conn``, once the read under way has returned."""
+        held = on_link(self.desk.link, lambda: Held(conn))
+        self.laptop.link.send({"t": "cycle"})
+        self.assertEqual(self.desk.expect("message")["t"], "cycle")
+        self.assertTrue(held.reading.wait(5))
+        return held
+
+    def test_a_computer_taken_out_says_nothing_more_on_its_old_call(self):
+        self.connect()
+
+        def late(settings):
+            conn = self.desk.link._conns[self.pair]
+            self.desk.link._apply(settings, 7)
+            conn.reader.feed_data(b'{"t":"late"}\n')  # read off the socket before it was closed, not yet acted on
+
+        self.call()
+        on_link(self.desk.link, lambda: late(None))
+        kinds = [kind for kind, _payload in self.heard()]
+        self.assertIn("down", kinds)
+        self.assertLess(kinds.index("mark"), kinds.index("down"))
+        self.assertNotIn("message", kinds)
+        self.desk.link.configure(KEY, self.desk.port, "")
+        self.desk.expect("up")
+        self.call()
+        on_link(self.desk.link, lambda: late((self.desk.port, ((self.pair, KEY, "127.0.0.1:1"),))))  # it stays
+        self.assertEqual(self.desk.expect("message")["t"], "late")
+
+    def test_a_call_replaced_before_the_pause_says_nothing_after_resume(self):
+        for cycles in (1, 2):
+            with self.subTest(cycles=cycles):
+                if cycles > 1:  # afresh
+                    for end in (self.desk, self.laptop):
+                        end.link.stop()
+                    self.desk = End("desk", os.path.join(self.folder, "at-desk"))
+                    self.laptop = End("laptop", os.path.join(self.folder, "at-laptop"))
+                    self.addCleanup(self.desk.link.stop)
+                    self.addCleanup(self.laptop.link.stop)
+                self.connect()
+                self.desk.link.accept_files(1 << 20)
+                helds = []
+                for cycle in range(cycles):
+                    conn = self.call()
+                    held = self.held(conn)
+                    on_link(self.desk.link, lambda: held.let_go({"t": "warm"}))
+                    self.assertEqual(self.desk.expect("message")["t"], "warm")  # a held call does deliver
+                    on_link(self.desk.link, lambda: held.lines.extend(STALE))
+                    on_link(self.laptop.link, lambda: [call.close() for call in self.laptop.link._conns.values()])
+                    self.desk.expect("up")  # the laptop called again, and that call took over
+                    self.assertIsNot(self.call(), conn)
+                    self.take_out(7 + cycle)
+                    helds.append(held)
+                for held in helds:
+                    on_link(self.desk.link, held.let_go)
+                for kind, payload in self.heard():
+                    self.assertNotIn(kind, ("files", "files-coming", "files-declined"))
+                    self.assertNotIn("stale", (payload.get("name"), payload.get("text")) if isinstance(payload, dict) else ())
+                self.assertFalse(on_link(self.desk.link, lambda: self.desk.link._receiver.busy))
+                self.laptop.link.set_status({"name": "fresh", "channel": 3, "present": False})
+                while self.desk.expect("status")["name"] != "fresh":
+                    pass
+                self.laptop.link.send({"t": "clipboard", "text": "fresh"})
+                self.assertEqual(self.desk.expect("message")["text"], "fresh")
+                self.laptop.link.offer_files([{"path": "d", "dir": True}], [None])
+                self.assertEqual(len(self.desk.expect("files")["paths"]), 1)
+
+    def test_bytes_still_on_their_way_when_its_computer_is_taken_out_are_not_taken(self):
+        self.connect()
+        self.desk.link.accept_files(1 << 20)
+        stale = [({"t": "clip", "mime": "image/png"}, b"stale picture"),
+                 ({"t": "files", "id": "stale1", "items": [{"path": "a.txt", "size": 5}], "inline": True}, b"stale")]
+        for cycle, (message, data) in enumerate(stale):
+            conn = self.call()
+            held = on_link(self.desk.link, lambda: HeldData(conn))
+            self.laptop.link.send(message, data)
+            self.assertEqual(held.reached.get(timeout=5)["t"], message["t"])  # read, its bytes in, and held
+            self.take_out(7 + cycle)
+            on_link(self.desk.link, held.let_go)
+            kinds = [kind for kind, _payload in self.heard()]
+            self.assertFalse(set(kinds) & {"message", "files", "files-coming", "files-declined"}, kinds)
+            self.assertFalse(on_link(self.desk.link, lambda: self.desk.link._receiver.busy))
+        conn = self.call()  # the laptop stays: what it sends is taken, bytes and all, however the settings change
+        held = on_link(self.desk.link, lambda: HeldData(conn))
+        self.laptop.link.send({"t": "clip", "mime": "image/png"}, b"kept picture")
+        held.reached.get(timeout=5)
+        self.keep()
+        on_link(self.desk.link, held.let_go)
+        self.assertEqual(self.desk.expect("message")["data"], b"kept picture")
+
+    def test_a_read_that_runs_out_of_time_after_its_computer_was_taken_out_says_nothing(self):
+        self.addCleanup(setattr, flow, "QUIET_AFTER", flow.QUIET_AFTER)
+        flow.QUIET_AFTER = 0.0  # any time without a word counts: a read running out of time is a stall at once
+        self.connect()
+        held = self.held(self.call())
+        on_link(self.desk.link, lambda: held.let_go(asyncio.TimeoutError(), {"t": "warm"}))
+        self.assertIs(self.desk.expect("quiet"), True)  # the call in use: as always, a stall, and then it is back
+        self.assertIs(self.desk.expect("quiet"), False)
+        self.assertEqual(self.desk.expect("message")["t"], "warm")
+        self.take_out(7)
+        on_link(self.desk.link, lambda: held.let_go(asyncio.TimeoutError(), dict(STALE[0])))
+        found = [(kind, payload) for kind, payload in self.heard() if kind in ("quiet", "status", "message")]
+        self.assertEqual(found, [])
+        self.laptop.link.set_status({"name": "fresh", "channel": 3, "present": False})
+        while self.desk.expect("status")["name"] != "fresh":
+            pass
+        held = self.held(self.call())  # the laptop stays: its call runs out of time as always, settings changed or not
+        self.keep()
+        on_link(self.desk.link, lambda: held.let_go(asyncio.TimeoutError()))
+        self.assertIs(self.desk.expect("quiet"), True)
+
+
+def port_free(port):
+    """Nothing here or elsewhere holds ``port``: it can be bound and listened on, as the link does it."""
+    for family, address in ((socket.AF_INET, "0.0.0.0"), (socket.AF_INET6, "::")):
+        probe = socket.socket(family)
+        try:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if family == socket.AF_INET6:
+                probe.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+            probe.bind((address, port))
+            probe.listen()
+        except OSError:
+            return False
+        finally:
+            probe.close()
+    return True
+
+
+@unittest.skipUnless(flow.supported(), "this Python has no pre-shared keys for TLS")
+class OpeningThePort(TwoComputers):
+    """The desk's settings change while it is still opening its port, as a pause and a resume at once do. The
+    opening is held at a wait start_server really has: looking up the address (before any socket), or the one
+    after the bind (start_server's own when it serves at once, start_serving's otherwise). Only the laptop and the
+    tower call, so that only the desk's listening gets them in; nothing here closes a socket of the desk's."""
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(setattr, flow, "broadcast_addresses", flow.broadcast_addresses)
+        flow.broadcast_addresses = lambda: []  # no "here I am": the desk never calls them itself
+        self.held, self._go = threading.Event(), asyncio.Event()
+        self.addCleanup(self.let_go)
+
+    def hold_after_binding(self):
+        """Hold the desk's first wait after binding its port, until let_go()."""
+        sleep, thread, armed = asyncio.tasks.sleep, self.desk.link._thread, [True]
+
+        async def held(result):
+            self.held.set()
+            await self._go.wait()
+            return await sleep(0, result)
+
+        def gated(delay, result=None):
+            caller = sys._getframe(1).f_code
+            if (armed[0] and delay == 0 and threading.current_thread() is thread
+                    and caller.co_filename == asyncio.base_events.__file__
+                    and caller.co_name in ("create_server", "start_serving")):
+                armed[0] = False
+                return held(result)
+            return sleep(delay, result)
+        self.addCleanup(setattr, asyncio.tasks, "sleep", sleep)
+        asyncio.tasks.sleep = gated
+
+    def hold_looking_up(self):
+        """Hold the desk's first look-up of the address to listen on, until let_go(): no socket is open yet."""
+        loop, armed = self.desk.link._loop, [True]
+        getaddrinfo = loop.getaddrinfo
+
+        async def gated(host, port, **options):
+            if armed[0] and host is None:
+                armed[0] = False
+                self.held.set()
+                await self._go.wait()
+            return await getaddrinfo(host, port, **options)
+        loop.getaddrinfo = gated
+
+    def let_go(self):
+        try:
+            self.desk.link._loop.call_soon_threadsafe(self._go.set)
+        except RuntimeError:  # stopped: nothing waits any more
+            pass
+
+    def peers(self, *keys):
+        return [{"key": key, "address": ""} for key in keys]
+
+    def pause_and_resume(self, *kept):
+        """Switch the desk on, and while its port opens take the laptop out and have it back, as Pause and Resume do."""
+        self.desk.link.configure(self.peers(KEY, *kept), self.desk.port)
+        self.assertTrue(self.held.wait(5))
+        self.desk.link.configure(self.peers(*kept) or None, self.desk.port)
+        self.desk.link.configure(self.peers(KEY, *kept), self.desk.port, mark=1)
+        self.assertEqual(self.desk.expect("mark"), 1)
+
+    def problems(self, for_=0.6):
+        found, deadline = [], time.monotonic() + for_
+        while time.monotonic() < deadline:
+            try:
+                kind, payload = self.desk.heard.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            if kind == "problem":
+                found.append(payload)
+        return found
+
+    def listening(self):
+        """The desk's own listening, and any task of it still opening a port."""
+        def look():
+            link = self.desk.link
+            opening = [task for task in asyncio.all_tasks(link._loop)
+                       if task.get_coro().__qualname__ == "Link._listen" and not task.done()]
+            return link._server, opening
+        return on_link(self.desk.link, look)
+
+    def assert_listening_for(self, *ends):
+        """The desk listens on its port alone, says it can, lets each of ``ends`` in, and frees the port when it stops."""
+        self.assertEqual(self.desk.expect("problem"), "")
+        self.let_go()
+        self.assertEqual(self.problems(), [])  # the older opening says nothing, not even later
+        server, opening = self.listening()
+        self.assertIsNotNone(server)
+        self.assertEqual({sock.getsockname()[1] for sock in server.sockets}, {self.desk.port})
+        self.assertEqual(opening, [])
+        for end, key in ends:
+            end.link.configure(key, end.port, f"127.0.0.1:{self.desk.port}")
+            self.assertEqual(end.expect("up")["name"], "desk")
+        self.desk.link.configure(self.peers(*(key for _end, key in ends)), self.desk.port)  # the same again
+        self.assertTrue(self.desk.quiet("problem", 0.3))
+        self.assertIs(self.listening()[0], server)
+        self.assert_stops_and_frees_its_port()
+
+    def assert_stops_and_frees_its_port(self):
+        """Stopped, the desk has closed every socket it opened itself: none is left for the collector to find."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ResourceWarning)
+            self.desk.link.stop()
+            gc.collect()
+        self.assertFalse(self.desk.link._thread.is_alive())
+        self.assertEqual([str(w.message) for w in caught if issubclass(w.category, ResourceWarning)], [])
+        self.assertTrue(port_free(self.desk.port))
+
+    def test_resumed_while_its_port_was_bound_and_not_yet_its_own(self):
+        self.hold_after_binding()
+        self.pause_and_resume()
+        self.assert_listening_for((self.laptop, KEY))
+
+    def test_resumed_while_its_port_was_looked_up_and_the_old_opening_stays_silent(self):
+        self.hold_looking_up()
+        self.pause_and_resume()
+        self.assert_listening_for((self.laptop, KEY))
+
+    def test_the_computer_kept_through_the_pause_and_the_one_resumed_both_get_in(self):
+        tower = End("tower", os.path.join(self.folder, "at-tower"))
+        self.addCleanup(tower.link.stop)
+        self.hold_after_binding()
+        self.pause_and_resume(OTHER_KEY)
+        self.assert_listening_for((self.laptop, KEY), (tower, OTHER_KEY))
+
+    def test_a_port_taken_meanwhile_stays_the_problem(self):
+        self.hold_after_binding()
+        self.desk.link.configure(KEY, self.desk.port, "")
+        self.assertTrue(self.held.wait(5))
+        self.desk.link.configure(None)
+        on_link(self.desk.link, lambda: None)  # taken out: the desk no longer holds its port
+        taken = socket.socket()
+        self.addCleanup(taken.close)
+        taken.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        taken.bind(("0.0.0.0", self.desk.port))
+        taken.listen()
+        with self.assertLogs("mxoptions.flow", "WARNING"):
+            self.desk.link.configure(KEY, self.desk.port, "")
+            self.assertTrue(self.desk.expect("problem"))
+        self.let_go()
+        self.assertEqual(self.problems(), [])  # the opening overtaken does not say it listens
+        self.assertIsNone(self.listening()[0])
+
+    def test_stopped_while_its_port_opens(self):
+        for hold in ("hold_after_binding", "hold_looking_up"):
+            with self.subTest(hold=hold):
+                self.desk = End("desk", os.path.join(self.folder, f"at-desk-{hold}"))
+                self.addCleanup(self.desk.link.stop)
+                self.held, self._go = threading.Event(), asyncio.Event()
+                getattr(self, hold)()
+                self.desk.link.configure(KEY, self.desk.port, "")
+                self.assertTrue(self.held.wait(5))
+                self.assert_stops_and_frees_its_port()
+
 
 class Collecting(unittest.TestCase):
     def setUp(self):
@@ -782,6 +1257,294 @@ class Leaving(unittest.TestCase):
         engine = engine_with_hosts()
         engine._device_action({"type": "flow"}, "trigger")
         self.assertEqual(self.outcome(engine), [("asked", None)])
+
+
+class HoldingCtrl(unittest.TestCase):
+    """Flow, "Cross only while Ctrl is held": the edge sends the mouse across only while Ctrl is known to be down.
+    What the system says of Ctrl is made up here and counted; nothing real is asked."""
+
+    def setUp(self):
+        self.engine = engine_with_hosts(hold_ctrl=True)
+        self.per_mm = self.engine._counts_per_mm()
+        self.held, self.asked = None, 0
+
+        def ctrl_held():
+            self.asked += 1
+            return self.held
+
+        patch = mock.patch.object(environment, "ctrl_held", ctrl_held)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def sent(self):
+        return self.engine.mouse.sent
+
+    def said(self):
+        return [payload for kind, payload in self.engine.listener.events if kind == "flow"]
+
+    def push(self, mm, when):
+        self.engine._on_push(mm * self.per_mm, 0, when)
+
+    def test_off_the_edge_crosses_without_asking(self):
+        self.held = False  # it would refuse, were it asked
+        for engine in (engine_with_hosts(), engine_with_hosts(hold_ctrl=False)):
+            self.engine = engine
+            engine._flow_arm((1, "right", 10.0))
+            self.push(11, 0.0)
+            engine._flow_arm((1, "right", 0.0))  # at a touch
+            engine._watcher = Watcher(time.monotonic(), tracks_motion=False)
+            engine._flow_arm((1, "right", 10.0))  # resting at the edge
+            engine._push["deadline"] = time.monotonic() - 0.01
+            engine._tick()
+            self.assertEqual(engine.mouse.sent, [1, 1, 1])
+            self.assertEqual(self.said(), [("left", 1)] * 3)
+        self.assertEqual(self.asked, 0)
+
+    def test_with_ctrl_held_the_push_crosses(self):
+        self.held = True
+        self.engine._flow_arm((1, "right", 10.0))
+        self.push(6, 0.00)
+        self.assertEqual(self.asked, 0)  # asked only once the push is enough
+        self.push(5, 0.05)
+        self.assertEqual(self.sent(), [1])
+        self.assertEqual(self.said(), [("left", 1)])
+        self.assertEqual(self.asked, 1)
+        self.assertIsNone(self.engine._push)
+        self.engine._flow_arm((1, "right", 0.0))  # at a touch, Ctrl held: at once
+        self.assertEqual(self.sent(), [1, 1])
+
+    def test_without_ctrl_no_push_crosses_and_nothing_is_said(self):
+        self.held = False
+        self.engine._flow_arm((1, "right", 10.0))
+        for step in range(5):
+            self.push(11, 0.05 * step)
+        self.assertEqual(self.sent(), [])
+        self.assertEqual(self.said(), [])
+        self.assertEqual(self.asked, 5)
+        self.assertIsNotNone(self.engine._push)  # still armed
+        self.assertIsNotNone(self.engine._watcher.on_motion)
+        self.assertEqual(self.engine._push["got"], 0.0)
+
+    def test_when_ctrl_cannot_be_told_the_edge_keeps_the_mouse(self):
+        self.held = None
+        self.engine._flow_arm((1, "right", 10.0))
+        self.push(11, 0.00)
+        self.engine._flow_arm((1, "right", 0.0))
+        self.engine._watcher = Watcher(time.monotonic(), tracks_motion=False)
+        self.engine._flow_arm((1, "right", 10.0))
+        self.engine._push["deadline"] = time.monotonic() - 0.01
+        self.engine._tick()
+        self.assertEqual(self.sent(), [])
+        self.assertEqual(self.said(), [])
+        self.assertEqual(self.asked, 3)
+
+    def test_at_a_touch_ctrl_is_asked_and_a_little_more_push_asks_again(self):
+        self.held = False
+        self.engine._flow_arm((1, "right", 0.0))
+        self.assertEqual((self.sent(), self.asked), ([], 1))
+        self.assertAlmostEqual(self.engine._push["need"], engine_module.CTRL_AGAIN_MM * self.per_mm)
+        self.assertIsNotNone(self.engine._watcher.on_motion)
+        self.push(0.5, 0.00)
+        self.assertEqual(self.asked, 1)
+        self.held = True
+        self.push(0.6, 0.02)
+        self.assertEqual(self.sent(), [1])
+        self.assertEqual(self.asked, 2)
+        self.engine._watcher = Watcher(time.monotonic(), tracks_motion=False)  # and where only resting can do
+        self.held = False
+        self.engine._flow_arm((1, "right", 0.0))
+        self.assertEqual(self.sent(), [1])
+        push = self.engine._push
+        self.assertAlmostEqual(push["dwell"], engine_module.PUSH_DWELL + engine_module.CTRL_AGAIN_MM * engine_module.PUSH_DWELL_PER_MM)
+        self.held = True
+        push["deadline"] = time.monotonic() - 0.01
+        self.engine._tick()
+        self.assertEqual(self.sent(), [1, 1])
+
+    def test_resting_at_the_edge_waits_for_ctrl(self):
+        self.engine._watcher = Watcher(time.monotonic(), tracks_motion=False)
+        self.held = False
+        self.engine._flow_arm((1, "right", 10.0))
+        push = self.engine._push
+        self.assertEqual(push["dwell"], engine_module.PUSH_DWELL + 10.0 * engine_module.PUSH_DWELL_PER_MM)
+        push["deadline"] = time.monotonic() - 0.01
+        before = time.monotonic()
+        self.engine._tick()
+        self.assertEqual((self.sent(), self.said(), self.asked), ([], [], 1))
+        self.assertIs(self.engine._push, push)
+        self.assertGreaterEqual(push["deadline"], before + push["dwell"])  # asked again only after another dwell
+        self.engine._tick()
+        self.assertEqual(self.asked, 1)
+        self.held = True
+        push["deadline"] = time.monotonic() - 0.01
+        self.engine._tick()
+        self.assertEqual(self.sent(), [1])
+
+    def test_ctrl_let_go_before_the_push_is_enough_keeps_the_mouse(self):
+        self.held = True
+        self.engine._flow_arm((1, "right", 10.0))
+        self.push(6, 0.00)
+        self.held = False  # let go while pushing
+        self.push(5, 0.05)
+        self.assertEqual((self.sent(), self.said(), self.asked), ([], [], 1))
+        self.assertIsNotNone(self.engine._push)
+
+    def test_ctrl_pressed_after_a_refusal_needs_a_whole_push(self):
+        self.held = False
+        self.engine._flow_arm((1, "right", 10.0))
+        self.push(11, 0.00)
+        self.assertEqual(self.sent(), [])
+        self.held = True  # pressed while resting at the edge: no new report from the edge needed
+        self.push(5, 0.05)
+        self.assertEqual(self.sent(), [])  # what was pushed before the refusal does not count
+        self.push(6, 0.10)
+        self.assertEqual(self.sent(), [1])
+
+    def test_switching_it_while_armed_counts_at_once(self):
+        """Through the engine's own queue, as the settings window and the API change it."""
+        engine = self.engine = engine_with_hosts()
+
+        def change(hold_ctrl):
+            cfg = copy.deepcopy(engine.cfg)
+            cfg["flow"]["hold_ctrl"] = hold_ctrl
+            engine.set_config(cfg)
+            while not engine._queue.empty():
+                engine._handle(engine._queue.get_nowait())
+
+        self.held = False
+        engine._flow_arm((1, "right", 10.0))
+        self.push(6, 0.00)
+        change(True)
+        self.assertIsNotNone(engine._push)  # still armed
+        self.push(5, 0.05)
+        self.assertEqual((self.sent(), self.asked), ([], 1))
+        change(False)
+        self.push(11, 0.10)
+        self.assertEqual(self.sent(), [1])
+        self.assertEqual(self.asked, 1)
+
+    def test_nothing_is_logged_about_ctrl(self):
+        with self.assertNoLogs("mxoptions", level="DEBUG"):
+            for self.held in (False, None):
+                self.engine._flow_arm((1, "right", 10.0))
+                self.push(11, 0.00)
+                self.engine._flow_arm((1, "right", 0.0))
+        self.assertEqual(self.said(), [])
+        self.assertEqual(set(self.engine._push), {"channel", "axes", "need", "got", "last", "deadline", "dwell"})
+        self.assertNotIn("hold_ctrl", self.engine._push)
+
+    def test_disconnect_drops_the_wait(self):
+        self.held = False
+        self.engine._flow_arm((1, "right", 10.0))
+        self.push(11, 0.00)
+        self.engine._reset_input_state()  # the mouse went away
+        self.assertIsNone(self.engine._push)
+        self.held = True
+        self.push(11, 0.05)
+        self.assertEqual(self.sent(), [])
+
+    def test_the_action_does_not_need_ctrl(self):
+        self.held = False
+        self.engine._flow_leave(1, False)  # the action, or the mouse following the keyboard
+        self.assertEqual(self.sent(), [1])
+        self.engine._device_action({"type": "flow"}, "trigger")
+        self.assertEqual(self.said(), [("left", 1), ("asked", None)])
+        self.assertEqual(self.asked, 0)
+
+    def test_a_held_button_still_keeps_the_mouse(self):
+        self.held = True
+        self.engine._hid_buttons = 0x01
+        self.engine._flow_arm((1, "right", 10.0))
+        self.push(11, 0.00)
+        self.assertEqual(self.sent(), [])
+        self.assertEqual(self.said(), [("refused", "held")])
+
+
+class CtrlSource(unittest.TestCase):
+    """Where "is Ctrl held" comes from on each desktop; the system calls are made up, nothing real is asked."""
+
+    def x11_lib(self, mask, same=1):
+        lib = types.SimpleNamespace(XDefaultRootWindow=lambda display: 7)
+        asked = []
+
+        def query(*args):
+            asked.append(args[:2])
+            args[-1]._obj.value = mask
+            return same
+
+        lib.XQueryPointer = query
+        return lib, asked
+
+    def test_x11_reads_control_mask_only(self):
+        shift, lock, mod1, mod4 = 1 << 0, 1 << 1, 1 << 3, 1 << 6
+        for mask, same, held in ((1 << 2, 1, True), (shift | 1 << 2 | 1 << 8, 1, True), (0, 1, False),
+                                 (shift | lock | mod1 | mod4 | 1 << 8, 1, False), (0xFFFF & ~(1 << 2), 1, False),
+                                 (1 << 2, 0, None)):
+            lib, asked = self.x11_lib(mask, same)
+            with self.subTest(mask=mask, same=same), mock.patch.object(x11, "_open", lambda: 1234), \
+                    mock.patch.object(x11, "_lib", lib), mock.patch.object(x11, "_display", 1234):
+                self.assertIs(x11.ctrl_held(), held)
+                self.assertEqual(asked, [(1234, 7)])  # the default root window of the open display
+                self.assertIs(x11.available(), True)
+        with mock.patch.object(x11, "_open", lambda: None):
+            self.assertIsNone(x11.ctrl_held())
+            self.assertIs(x11.available(), False)
+
+    def test_windows_trusts_only_the_high_bit(self):
+        asked = []
+
+        class User32:
+            def __init__(self, raw):
+                self.raw = raw
+
+                def GetAsyncKeyState(vk):  # noqa: N802 as Windows names it
+                    asked.append(vk)
+                    return GetAsyncKeyState.restype(self.raw).value  # as ctypes hands back what it returned
+
+                self.GetAsyncKeyState = GetAsyncKeyState
+
+        made = {}
+
+        def win_dll(name):
+            self.assertEqual(name, "user32")
+            return made["dll"]
+
+        with mock.patch.dict(sys.modules, {"winreg": types.ModuleType("winreg")}), \
+                mock.patch.object(ctypes, "WinDLL", win_dll, create=True):
+            sys.modules.pop("mxoptions.windows", None)
+            try:
+                import mxoptions.windows as windows
+                for raw, held in ((0x8000, True), (0x8001, True), (0xFFFF, True), (0x0001, False), (0x0000, None)):
+                    made["dll"] = User32(raw)
+                    with self.subTest(raw=hex(raw)):
+                        self.assertIs(windows.ctrl_held(), held)
+                        self.assertIs(made["dll"].GetAsyncKeyState.restype, ctypes.c_short)
+                        self.assertEqual(made["dll"].GetAsyncKeyState.argtypes, [ctypes.c_int])
+                self.assertEqual(set(asked), {0x11})  # VK_CONTROL: either Ctrl key
+                with mock.patch.object(ctypes, "WinDLL", mock.Mock(side_effect=OSError("synthetic")), create=True):
+                    self.assertIsNone(windows.ctrl_held())
+            finally:
+                sys.modules.pop("mxoptions.windows", None)
+                if hasattr(mxoptions, "windows"):
+                    del mxoptions.windows
+
+    def test_each_desktop_asks_its_own_system(self):
+        fake_windows = types.SimpleNamespace(ctrl_held=lambda: "from windows")
+        with mock.patch.object(x11, "ctrl_held", lambda: "from x11"), mock.patch.object(x11, "available", lambda: "x11 there"), \
+                mock.patch.object(mxoptions, "windows", fake_windows, create=True), \
+                mock.patch.dict(sys.modules, {"mxoptions.windows": fake_windows}):
+            for kind, held, readable in (("x11", "from x11", "x11 there"), ("windows", "from windows", True)):
+                with self.subTest(kind=kind), mock.patch.object(environment, "session", lambda kind=kind: kind):
+                    self.assertEqual(environment.ctrl_held(), held)
+                    self.assertEqual(environment.ctrl_readable(), readable)
+
+    def test_wayland_cannot_tell_even_with_an_x_server(self):
+        trap = mock.Mock(side_effect=AssertionError("XWayland asked"))
+        with mock.patch.object(environment, "session", lambda: "wayland"), mock.patch.dict(os.environ, {"DISPLAY": ":0"}), \
+                mock.patch.object(x11, "ctrl_held", trap), mock.patch.object(x11, "available", trap):
+            self.assertIsNone(environment.ctrl_held())
+            self.assertIs(environment.ctrl_readable(), False)
+        trap.assert_not_called()
 
 
 if __name__ == "__main__":

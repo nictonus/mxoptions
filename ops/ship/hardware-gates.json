@@ -7,8 +7,13 @@
     "mxoptions/config.py",
     "mxoptions/device.py",
     "mxoptions/engine.py",
+    "mxoptions/environment.py",
+    "mxoptions/flow.py",
+    "mxoptions/flow_edges.py",
+    "mxoptions/flow_files.py",
     "mxoptions/flow_service.py",
     "mxoptions/front.py",
+    "mxoptions/gestures.py",
     "mxoptions/hid_linux.py",
     "mxoptions/hid_windows.py",
     "mxoptions/hidpp.py",
@@ -21,10 +26,13 @@
     "mxoptions/ui/action_picker.py",
     "mxoptions/ui/editors.py",
     "mxoptions/ui/flow_page.py",
+    "mxoptions/ui/gestures_page.py",
     "mxoptions/ui/keyboard*.py",
     "mxoptions/ui/main_window.py",
     "mxoptions/ui/pages.py",
+    "mxoptions/ui/ring*.py",
     "mxoptions/ui/store.py",
+    "mxoptions/ui/*.qml",
     "data/70-mxoptions.rules*",
     "data/mxoptions.service.in"
   ],
@@ -34,13 +42,8 @@
     "mxoptions/assets/*",
     "mxoptions/clipboard.py",
     "mxoptions/desktop.py",
-    "mxoptions/environment.py",
     "mxoptions/firmware.py",
-    "mxoptions/flow.py",
-    "mxoptions/flow_edges.py",
-    "mxoptions/flow_files.py",
     "mxoptions/flow_pairing.py",
-    "mxoptions/gestures.py",
     "mxoptions/i18n.py",
     "mxoptions/i18n_uk.py",
     "mxoptions/keys.py",
@@ -48,16 +51,13 @@
     "mxoptions/rumble.py",
     "mxoptions/rumble_windows.py",
     "mxoptions/ui/__init__.py",
-    "mxoptions/ui/gestures_page.py",
     "mxoptions/ui/icons.py",
     "mxoptions/ui/mouse_*.py",
     "mxoptions/ui/recorder.py",
-    "mxoptions/ui/ring*.py",
     "mxoptions/ui/sounds.py",
     "mxoptions/ui/theme.py",
     "mxoptions/ui/tray_icon.py",
     "mxoptions/ui/widgets.py",
-    "mxoptions/ui/*.qml",
     "data/mxoptions.desktop",
     "data/mxoptions.in"
   ],
@@ -72,20 +72,33 @@
     "keyboard-battery": "Keyboard battery level shown; the low-battery notice appears.",
     "top-row-fn-modes": "Fn+Esc in both modes: note which control IDs a remapped top-row key reports.",
     "bluetooth-zero-id-access": "Keyboard attached over Bluetooth with a zero product ID: note the access result; no udev rule change.",
-    "windows-keyboard": "Windows 11 with Logi Options+ stopped: keyboard found; remap, restore and held keys behave.",
     "shared-receiver-mouse-latency": "Mouse request latency while the keyboard is probed on a shared receiver, measured from the debug log.",
     "keyboard-identity": "Keyboard identity read with a non-zero unit ID; same over Bolt and Bluetooth and after a power cycle; differs between two units when two are available. Identifiers stay in private notes, never in the evidence record.",
     "mouse-follows-keyboard": "Mouse-follows-keyboard on, press the keyboard's Easy-Switch key: the mouse moves to the same computer; latency noted; mouse-in-deep-sleep case noted; three-computer case.",
-    "keyboard-follow-held-key-check": "Keyboard follows the mouse over Flow: with no key held it follows; holding Shift, a letter key, or a media key not set to an app action, it stays; each direction and connection noted. From a Windows computer it stays (unsupported): there the keyboard's Easy-Switch key brings it back.",
+    "keyboard-follow-held-key-check": "Keyboard follows the mouse over Flow: with no key held it follows; holding Shift, a letter key, or a media key not set to an app action, it stays; each direction and connection noted.",
     "keyboard-follow-held-key-at-switch": "Hold a key physically during an Easy-Switch: note what the old and the new computer see.",
     "keyboard-follow-two-computers": "Two Linux computers paired over Flow: the keyboard follows the mouse both ways, keys given back before the switch, no dead keys, 40 crossings in one session.",
-    "app-profiles-desktops": "Keyboard app profiles change keys for the app in front on KDE Wayland, X11, sway, Hyprland and Windows; GNOME shows the not-available message.",
+    "app-profiles-desktops": "Keyboard app profiles change keys for the app in front on KDE Wayland, X11, sway and Hyprland; GNOME shows the not-available message.",
     "fn-lock-setting": "Toggle the Fn lock switch: the top row flips. The keyboard's own Fn-lock shortcut: the switch follows within a second. Easy-Switch away and back: setting kept per channel as the keyboard keeps it. Power cycle: kept. Toggle while holding F5 with the mouse, then release: no stuck key.",
     "disable-keys-setting": "Disable and enable each advertised key; rapid changes preserve both choices. Check power cycle, a native modifier held during change, and a remapped key. Restore earlier disable setting first, then press and release any stuck modifier on original computer.",
     "os-layout-setting": "Change layout on current channel and read it back; check keyboard shortcut, remapped keys and a held native modifier. Restore earlier layout first, then press and release affected modifier on original computer. Record other-channel behavior when available.",
     "backlight-settings": "Exercise every enabled backlight control and each timer; read-only or unsupported controls stay disabled. Check keyboard brightness keys and notices, own-change suppression, power cycle and preserved settings. Record unsupported controls without claiming them implemented.",
     "backlight-effect-ids-observed": "Choose each backlight effect with the keyboard's own effect key and run tools/hidpp_probe.py --json after each: the effect byte read back equals the ID this build names for the effect the keyboard shows, for every effect, the same over two full cycles. Any mismatch is a fail; effects then stay a hint.",
-    "lock-key-notices": "Turn lock-key notices on: Caps Lock and Num Lock toggles show the right notice; off shows nothing."
+    "lock-key-notices": "Turn lock-key notices on: Caps Lock and Num Lock toggles show the right notice; off shows nothing.",
+    "mouse-haptic-battery-saving": "Haptic battery saving on: at 10 % mouse charge or below, button, gesture, ring, wheel, Flow and API vibrations stay still; above 10 % they play again. Switch off: they play at any charge. Same after the mouse reconnects.",
+    "mouse-low-battery-notice": "Mouse charge runs down to the low level while discharging: one on-screen notice; another only after it was charged in between. The keyboard notice still works.",
+    "screen-switch-haptic": "Screen-switch haptics on, two monitors, KDE Plasma Wayland and X11: one tick each time the pointer moves onto the other screen, none while it stays on one, none when off; plugging a monitor in or out gives no extra tick; battery saving keeps it still.",
+    "mouse-app-profiles-desktops": "Mouse profile for one app with its own buttons, Actions Ring, thumb-wheel function, thumb-wheel keystrokes and gestures: each applies only while that app is in front on KDE Wayland, X11, sway and Hyprland; other apps keep the global settings; GNOME Wayland shows the not-available message; switching app or turning the mouse off mid-action leaves no key or button held.",
+    "app-suggestions-linux": "Suggested settings on Linux fill only buttons and wheel that still do as in all apps; Zoom desktop meeting window, US layout: back toggles mute once per press, also on long hold, forward toggles video once; Teams, Photoshop and Premiere are not offered.",
+    "pan-zoom": "Gesture button set to Pan: page follows the hand on both axes, pointer still, release stops at once; speed and Reverse change it. Zoom: up zooms in, steady steps, no Ctrl left held after release. Press without moving runs the tap action. Mid-pan app switch or mouse off: nothing stuck. Middle button with Pan works the same. Practice mode draws without scrolling.",
+    "spotlight-effects-desktops": "Spotlight button: Highlight, Digital Laser and Still Magnify on hold and release on KDE X11, KDE Wayland, sway, GNOME Wayland and GNOME X11; double-click-hold as documented; Still Magnify on X11 at scale 1, 2 and fractional; a session without Magnify says so; no click is left swallowed after release.",
+    "thumbwheel-keystrokes": "Thumb-wheel function Custom keystrokes, turning up ] and down [ in an image editor: brush size steps; Reverse swaps them; a fast flick sends no steps after the wheel stops; with Shift held on the keyboard, up sends Shift+]; after release no key stays down.",
+    "macro-stop-on-press": "Macro with stop-on-press on a mouse button and on a keyboard key: a second press stops it at once and leaves no key or button down; with the option off a second press runs as before.",
+    "macro-file-dialogs": "Export a macro to a file and import it through the desktop's own file dialogs on KDE and GNOME: the editor shows the imported steps before anything is saved; cancel changes nothing.",
+    "flow-peer-pause": "Two Linux computers paired over Flow: pause one: the pointer never crosses to it, nothing is copied or sent to it, it stays paired; resume: crossing and copying work again without pairing anew.",
+    "flow-hold-ctrl": "Flow cross-only-with-Ctrl on, X11: pushing at the edge without Ctrl stays; with either Ctrl it crosses; letting Ctrl go mid-push stays. Wayland, where Ctrl cannot be read: it never crosses by the edge; the Flow action still works. Setting off: crossing as before.",
+    "keyboard-ring-key": "Actions Ring on a free programmable keyboard key: tap opens the ring at the pointer and a bubble click runs; hold, point, release runs; tap, tap closes; turning the keyboard off while held closes the ring; the mouse ring button still works; a ring key in an app profile works only in that app.",
+    "fn-lock-notices": "Fn-lock notices on: each Fn-lock change the keyboard reports shows one notice with the new state; off shows nothing."
   },
   "groups": [
     {
@@ -107,8 +120,7 @@
       ],
       "record": [
         "top-row-fn-modes",
-        "bluetooth-zero-id-access",
-        "windows-keyboard"
+        "bluetooth-zero-id-access"
       ]
     },
     {
@@ -193,6 +205,116 @@
       ],
       "require": [
         "lock-key-notices"
+      ]
+    },
+    {
+      "id": "mouse-battery-saving",
+      "present": [
+        "mxoptions/config.py:^\\s*\"haptics\": \\{.*\"battery_saving\":"
+      ],
+      "require": [
+        "mouse-haptic-battery-saving",
+        "mouse-low-battery-notice"
+      ]
+    },
+    {
+      "id": "screen-switch-haptics",
+      "present": [
+        "mxoptions/config.py:^\\s*\"screens\":"
+      ],
+      "require": [
+        "screen-switch-haptic"
+      ]
+    },
+    {
+      "id": "mouse-app-profiles",
+      "present": [
+        "mxoptions/config.py:^\\s*\"mouse\": \\{\"profiles\":"
+      ],
+      "require": [
+        "mouse-app-profiles-desktops",
+        "app-suggestions-linux"
+      ]
+    },
+    {
+      "id": "pan-zoom",
+      "present": [
+        "mxoptions/gestures.py:^HOLD_MODES = "
+      ],
+      "require": [
+        "pan-zoom"
+      ]
+    },
+    {
+      "id": "spotlight",
+      "present": [
+        "mxoptions/config.py:^EFFECTS = \\(\"highlight\""
+      ],
+      "require": [
+        "spotlight-effects-desktops"
+      ]
+    },
+    {
+      "id": "thumbwheel-keystrokes",
+      "present": [
+        "mxoptions/config.py:^THUMB_FUNCTIONS = \\(.*\"keys\""
+      ],
+      "require": [
+        "thumbwheel-keystrokes"
+      ]
+    },
+    {
+      "id": "macro-stop-on-press",
+      "present": [
+        "mxoptions/config.py:\"stop_on_press\""
+      ],
+      "require": [
+        "macro-stop-on-press"
+      ]
+    },
+    {
+      "id": "macro-files",
+      "present": [
+        "mxoptions/config.py:^MACRO_FORMAT = "
+      ],
+      "require": [
+        "macro-file-dialogs"
+      ]
+    },
+    {
+      "id": "flow-peer-pause",
+      "present": [
+        "mxoptions/config.py:entry\\.get\\(\"paused\"\\)"
+      ],
+      "require": [
+        "flow-peer-pause"
+      ]
+    },
+    {
+      "id": "flow-hold-ctrl",
+      "present": [
+        "mxoptions/config.py:^\\s*\"hold_ctrl\":"
+      ],
+      "require": [
+        "flow-hold-ctrl"
+      ]
+    },
+    {
+      "id": "keyboard-ring-key",
+      "present": [
+        "mxoptions/config.py:^KEYBOARD_ACTIONS = \\(.*\"ring\"\\)"
+      ],
+      "require": [
+        "keyboard-ring-key"
+      ]
+    },
+    {
+      "id": "fn-lock-notices",
+      "present": [
+        "mxoptions/config.py:\"fn_notices\""
+      ],
+      "require": [
+        "fn-lock-notices"
       ]
     }
   ]

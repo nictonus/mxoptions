@@ -17,6 +17,7 @@ _RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 # What SHQueryUserNotificationState says when something fills the screen: a full-screen program, a game drawing
 # with Direct3D, a presentation.
 _FILLS_THE_SCREEN = (2, 3, 4)
+VK_CONTROL = 0x11  # either Ctrl key (Microsoft, "Virtual-Key Codes")
 
 
 def fullscreen_in_front():
@@ -28,6 +29,61 @@ def fullscreen_in_front():
     except (OSError, AttributeError):
         return False
     return state.value in _FILLS_THE_SCREEN
+
+
+def ctrl_held():
+    """Whether a Ctrl key is down now: the high bit of GetAsyncKeyState(VK_CONTROL). Zero is also its answer when it
+    cannot tell (another desktop in front, UIPI), so zero is None: not known to be down."""
+    try:
+        user32 = ctypes.WinDLL("user32")
+    except OSError:
+        return None
+    user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+    user32.GetAsyncKeyState.restype = ctypes.c_short
+    state = user32.GetAsyncKeyState(VK_CONTROL)
+    return True if state < 0 else None if state == 0 else False
+
+
+def replace_file(source, target):
+    """Put the file ``source`` in the place of ``target``, as os.replace does, returning only once the move is on
+    the disk: MoveFileExW with MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH. Raises OSError."""
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.MoveFileExW.argtypes = [w.LPCWSTR, w.LPCWSTR, w.DWORD]
+    kernel32.MoveFileExW.restype = w.BOOL
+    if not kernel32.MoveFileExW(source, target, 0x1 | 0x8):
+        raise ctypes.WinError(ctypes.get_last_error())
+
+
+def foreground_program():
+    """The path of the program whose window is in front, or None (no window has the focus, or the program cannot
+    be asked). GetForegroundWindow, GetWindowThreadProcessId, then QueryFullProcessImageNameW (Win32 path format)
+    on a handle with PROCESS_QUERY_LIMITED_INFORMATION, as Microsoft's reference for each describes."""
+    try:
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    except OSError:
+        return None
+    user32.GetForegroundWindow.restype = w.HWND
+    user32.GetWindowThreadProcessId.argtypes = [w.HWND, ctypes.POINTER(w.DWORD)]
+    user32.GetWindowThreadProcessId.restype = w.DWORD
+    kernel32.OpenProcess.argtypes = [w.DWORD, w.BOOL, w.DWORD]
+    kernel32.OpenProcess.restype = w.HANDLE
+    kernel32.QueryFullProcessImageNameW.argtypes = [w.HANDLE, w.DWORD, w.LPWSTR, ctypes.POINTER(w.DWORD)]
+    kernel32.CloseHandle.argtypes = [w.HANDLE]
+    window = user32.GetForegroundWindow()  # NULL "in certain circumstances, such as when a window is losing activation"
+    pid = w.DWORD()
+    if not window or not user32.GetWindowThreadProcessId(window, ctypes.byref(pid)) or not pid.value:
+        return None
+    process = kernel32.OpenProcess(0x1000, False, pid.value)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not process:
+        return None
+    try:
+        name, size = ctypes.create_unicode_buffer(1024), w.DWORD(1024)
+        if not kernel32.QueryFullProcessImageNameW(process, 0, name, ctypes.byref(size)):
+            return None
+        return name.value
+    finally:
+        kernel32.CloseHandle(process)
 
 
 def background_command():

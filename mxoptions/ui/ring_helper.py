@@ -32,7 +32,7 @@ def main():
         out.write(json.dumps(dict(more, event=event)).encode("utf-8") + b"\n")
         out.flush()
 
-    overlay.triggered.connect(lambda action: tell("triggered", action=action))
+    overlay.triggered.connect(lambda action, session: tell("triggered", action=action, session=session))
     overlay.cue.connect(lambda wave: tell("cue", wave=int(wave)))
     overlay.opened.connect(lambda on: tell("opened", on=bool(on)))
 
@@ -47,12 +47,16 @@ def main():
         elif do == "configure":
             overlay.configure(dict(message["ring"], bubbles=config.clean_bubbles(message["ring"].get("bubbles"))))
         elif do == "handle":
-            overlay.handle(message.get("event"))
+            session, bubbles = message.get("session"), message.get("bubbles")
+            if ring.valid_session(session):
+                overlay.handle(message.get("event"), session, None if bubbles is None else config.clean_bubbles(bubbles))
         elif do == "turn":
             overlay.turn(message.get("clicks", 0))
         elif do == "open":
             bubbles = message.get("bubbles")
             overlay.open(None if bubbles is None else config.clean_bubbles(bubbles))
+        elif do == "effect":
+            overlay.effect(message.get("event"), message.get("look"))  # checked there
         elif do == "close":
             overlay.close()
 

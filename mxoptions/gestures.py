@@ -20,6 +20,14 @@ CUE_PRESETS = {
     "normal": {"armed": None, "turn": None, "swipe": 0x04, "repeat": 0x1B, "tap": None, "reject": None},
     "rich": {"armed": 0x1B, "turn": 0x1B, "swipe": 0x02, "repeat": 0x04, "tap": 0x04, "reject": 0x06},
 }
+# What gesture button can do instead of swipes while held (config: action's "mode"), with its label
+HOLD_MODES = {"pan": "Pan (hold and move)", "zoom": "Zoom (hold and move)"}
+
+
+def hold_mode(action):
+    """Held-button mode of gestures action, "pan" or "zoom", or None (swipes) for anything else in file."""
+    mode = action.get("mode")
+    return mode if isinstance(mode, str) and mode in HOLD_MODES else None  # text first: list or dict is no key
 # A swipe may fire before the button is released only when it is at least this many degrees clear of
 # the diagonal: a movement that is still ambiguous is better judged as a whole, on release.
 INSTANT_DEAD = 20.0

@@ -7,6 +7,7 @@ and a quick way to look at a layout change in both languages and all themes.
 
     python3 tools/screenshots.py docs/screenshots
     python3 tools/screenshots.py /tmp/shots --lang uk --theme light --accent '#4c9bff' --font 'MesloLGM Nerd Font'
+    python3 tools/screenshots.py /tmp/shots --keyboard   # a made-up keyboard as well, and its two pages
 """
 
 import argparse
@@ -39,6 +40,31 @@ STATE = {
     },
 }
 
+# A made-up keyboard for --keyboard: its keys are named by control ids invented for the picture, apart from the
+# Easy-Switch keys and Fn, which the keyboard keeps.
+KEYBOARD = {
+    "connected": True, "known": True, "name": "MX Mechanical", "battery": (64, 0), "current_host": 0,
+    "hosts": [{"paired": True, "name": "workstation"}, {"paired": True, "name": "laptop"}, {"paired": False, "name": ""}],
+    "keys": [{"id": f"0x{cid:04x}", "cid": cid, "tid": cid, "protected": cid in (0x00D1, 0x00D2, 0x00D3, 0x0034),
+              "active": cid in (0x0f01, 0x0f02, 0x0f05), "native_reason": "protected" if cid in (0x00D1, 0x00D2, 0x00D3, 0x0034) else None}
+             for cid in (0x00D1, 0x00D2, 0x00D3, 0x0034, 0x00E2, 0x00E3, 0x0f01, 0x0f02, 0x0f03, 0x0f04, 0x0f05, 0x0f06)],
+    "reason": None, "firmware": "12.3.45", "settings": ["fn", "backlight", "platform", "disable", "locks"],
+    "controls": {
+        "disable": {"value": ["insert"], "keys": ["caps_lock", "num_lock", "scroll_lock", "insert", "super"],
+                    "writable": True, "busy": False, "outcome": None},
+        "platform": {"value": 0, "choices": [{"index": 0, "os": ["windows", "android"]}, {"index": 1, "os": ["macos", "ios"]},
+                                             {"index": 2, "os": ["linux", "chromeos"]}],
+                     "writable": True, "busy": False, "outcome": None},
+        "backlight": {"value": {"on": True, "power_save": True, "mode": "manual", "level": 4, "hands_out": 60, "hands_in": 30,
+                                "powered": 300},
+                      "fields": ["on", "power_save", "mode", "level", "hands_out", "hands_in", "powered"],
+                      "can": ["on", "mode", "level", "hands_out", "hands_in", "powered"], "levels": 8, "shown_level": 4,
+                      "writable": True, "busy": False, "outcome": None},
+    },
+}
+KEYBOARD_KEYS = {"0x0f01": {"type": "keys", "keys": ["KEY_LEFTCTRL", "KEY_C"]}, "0x0f02": {"type": "keys", "keys": ["KEY_LEFTCTRL", "KEY_V"]},
+                 "0x0f05": {"type": "host", "host": 1}}
+
 
 class StandInEngine:
     """Accepts every call the window makes and does nothing."""
@@ -58,6 +84,7 @@ def main():
     parser.add_argument("--model", default="studio", choices=config.MODEL_STYLES, help="how the mouse is drawn")
     parser.add_argument("--ring", default="everyday", help="ring preset shown on the ring page")
     parser.add_argument("--size", default="1280x780", help="window size")
+    parser.add_argument("--keyboard", action="store_true", help="with a keyboard as well, and its pages after the others")
     args = parser.parse_args()
 
     i18n.setup(args.lang)
@@ -79,6 +106,10 @@ def main():
     cfg["app"].update(theme=args.theme, accent=args.accent, model=args.model)
     cfg["haptics"]["force"] = 5477
     cfg["ring"]["bubbles"] = dict((name, build) for name, _label, build in config.RING_PRESETS)[args.ring]()
+    state = STATE
+    if args.keyboard:
+        cfg["keyboard"]["keys"] = copy.deepcopy(KEYBOARD_KEYS)
+        state = dict(STATE, keyboard=KEYBOARD)
     store = Store(cfg, StandInEngine())
     store.flush = lambda: None  # never write the made-up settings anywhere
     store._save_timer.timeout.disconnect()
@@ -86,7 +117,7 @@ def main():
     width, height = map(int, args.size.split("x"))
     window.resize(width, height)
     window.show()
-    store.update_state(STATE)
+    store.update_state(state)
 
     def settle():
         """Let layouts, animations and the worker-thread model render finish."""
@@ -111,7 +142,7 @@ def main():
         window.grab().save(os.path.join(args.out, f"{name}.png"))
 
     os.makedirs(args.out, exist_ok=True)
-    for index, name in enumerate(PAGES):
+    for index, name in enumerate(PAGES + (("keyboard-keys", "keyboard") if args.keyboard else ())):
         window.stack.setCurrentIndex(index)
         window._nav.button(index).setChecked(True)
         page = window.stack.widget(index)

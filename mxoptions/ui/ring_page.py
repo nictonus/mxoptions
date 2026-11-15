@@ -13,7 +13,7 @@ from .. import APP_NAME, actions, config
 from ..i18n import _
 from . import icons, ring, theme
 from .action_picker import ActionList
-from .pages import BUTTON_TITLES
+from .pages import BUTTON_TITLES, AppChooser, chosen_profile
 from .widgets import ElidedButton, InfoButton, Row, Segmented, SliderRow, SwatchRow, hint_label, titled, ui_scale
 
 ICON_CHOICES = (
@@ -183,7 +183,7 @@ class BubbleEditor(QFrame):
         layout.addLayout(fields)
 
         self.stack = QStackedWidget()
-        self.actions = ActionList(exclude=frozenset({"default", "gestures", "ring", "dpi_shift"}))
+        self.actions = ActionList(exclude=actions.BUTTON_ONLY)
         self.actions.picked.connect(lambda action: self.changed.emit("action", action))
         self.stack.addWidget(self.actions)
         folder = QWidget()
@@ -289,13 +289,22 @@ class RingPage(QWidget):
         self.style = Segmented([("bubbles", _("Bubbles")), ("pie", _("Pie")), ("grid", _("Tiles"))])
         self.style.selected.connect(lambda value: self.store.set("ring", "style", value))
         heading.addWidget(self.style, 0, Qt.AlignmentFlag.AlignBottom)
-        presets = QPushButton(_("Presets"))  # Qt adds the drop-down arrow itself
+        self.presets = presets = QPushButton(_("Presets"))  # Qt adds the drop-down arrow itself
         presets.setCursor(Qt.CursorShape.PointingHandCursor)
         self.presets_menu = QMenu(presets)
         self.presets_menu.aboutToShow.connect(self._fill_presets_menu)
         presets.setMenu(self.presets_menu)
         heading.addWidget(presets, 0, Qt.AlignmentFlag.AlignBottom)
         left.addLayout(heading)
+        # Whose ring is shown: the one for all apps, or one app's (its own, or the one for all apps it uses)
+        self.apps = AppChooser(store, _("Settings for"))
+        self.apps.when_chosen = lambda app: (
+            _("{} uses the ring for all apps.").format(app) if (store.mouse_profile(app) or {}).get("ring") is None else "")
+        left.addWidget(self.apps)
+        self.own = QPushButton()
+        self.own.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.own.clicked.connect(self._own_clicked)
+        left.addWidget(self.own, 0, Qt.AlignmentFlag.AlignLeft)
 
         crumbs = QHBoxLayout()
         self.up = QPushButton("‹  " + _("Back"))
@@ -313,9 +322,12 @@ class RingPage(QWidget):
         self.size = SliderRow(_("Ring size"), 0.7, 1.5, 0.05, "{:.0%}")
         self.size.changed.connect(lambda value: self.store.set("ring", "size", round(value, 2)))
         left.addWidget(self.size)
+        self.shared = hint_label(_("Size and style are shared by all apps."))
+        left.addWidget(self.shared)
         self.button = Segmented([(key, _(BUTTON_TITLES[key])) for key in config.GESTURE_BUTTONS])
         self.button.selected.connect(lambda key: self.store.assign_role("ring", key))
-        left.addWidget(Row(_("The ring opens with"), _("Gestures move to the other thumb button."), self.button))
+        self.opens_with = Row(_("The ring opens with"), _("Gestures move to the other thumb button."), self.button)
+        left.addWidget(self.opens_with)
         self.unassigned = QLabel(_("No button opens the ring right now. Assign it on the Buttons page."))
         self.unassigned.setObjectName("banner")
         self.unassigned.setWordWrap(True)
@@ -335,7 +347,45 @@ class RingPage(QWidget):
         self.editor.moved.connect(self._move)
         self.editor.opened.connect(lambda: self._open(self._index))
         store.changed.connect(self._refresh)
+        store.mouse_app_changed.connect(self._app_changed)
         self._refresh()
+
+    def _app_changed(self):
+        self.apps.refresh()  # the list first: a page may be refreshed before its chooser
+        self._path, self._index = [], 0
+        self._refresh()
+
+    # -- whose ring ------------------------------------------------------------
+
+    def _root(self):
+        """The bubbles shown, and whether they are edited here: those of the app chosen, or for all apps."""
+        profile = chosen_profile(self.store)
+        if profile is None:
+            return self.store.cfg["ring"]["bubbles"], True
+        if profile["ring"] is None:
+            return self.store.cfg["ring"]["bubbles"], False
+        return profile["ring"], True
+
+    def _store_root(self, root):
+        profile = chosen_profile(self.store)
+        if profile is None:
+            self.store.set("ring", "bubbles", root)
+        else:
+            self.store.set_profile_ring(profile["app"], root)
+
+    def _own_clicked(self):
+        profile = chosen_profile(self.store)
+        if profile is None:
+            return
+        if profile["ring"] is None:
+            self._path, self._index = [], 0
+            self.store.set_profile_ring(profile["app"], copy.deepcopy(self.store.cfg["ring"]["bubbles"]))
+            return
+        answer = QMessageBox.question(self, APP_NAME, _("Use the ring for all apps in {}? Its own ring goes.").format(
+            profile["name"] or profile["app"]))
+        if answer == QMessageBox.StandardButton.Yes:
+            self._path, self._index = [], 0
+            self.store.set_profile_ring(profile["app"], None)
 
     # -- navigating the nested list -------------------------------------------
 
@@ -357,11 +407,14 @@ class RingPage(QWidget):
         return path
 
     def _edit(self, change):
-        """Apply ``change(level, root)`` to a copy of the ring and store it."""
-        root = copy.deepcopy(self.store.cfg["ring"]["bubbles"])
+        """Apply ``change(level, root)`` to a copy of the ring shown and store it."""
+        root, editable = self._root()
+        if not editable:
+            return
+        root = copy.deepcopy(root)
         self._path = self._valid_path(root)
         change(self._level_of(root, self._path), root)
-        self.store.set("ring", "bubbles", root)
+        self._store_root(root)
         self._refresh()
 
     # -- preview events -----------------------------------------------------
@@ -371,7 +424,7 @@ class RingPage(QWidget):
         self._refresh()
 
     def _open(self, index):
-        root = self.store.cfg["ring"]["bubbles"]
+        root = self._root()[0]
         level = self._level_of(root, self._valid_path(root))
         if 0 <= index < len(level) and ring.is_folder(level[index]):
             self._path = self._valid_path(root) + [index]
@@ -401,12 +454,23 @@ class RingPage(QWidget):
                 remove.addAction(entry["name"], lambda n=entry["name"]: self._delete_preset(n))
 
     def _apply_preset(self, name, builder):
+        def shown():  # whose ring the page shows, a copy of it, and whether it is edited here
+            profile = chosen_profile(self.store)
+            root, editable = self._root()
+            return (None if profile is None else profile["app"]), copy.deepcopy(root), editable
+
+        before = shown()
         answer = QMessageBox.question(
             self, APP_NAME, _("Replace the whole ring with the \"{}\" preset? Your current bubbles will be lost.").format(name)
         )
-        if answer == QMessageBox.StandardButton.Yes:
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        if shown() != before:  # changed while it asked: not the ring the user said yes to
+            QMessageBox.information(self, APP_NAME, _(
+                "Settings changed while this dialog was open. Choose the preset again."))
+        elif before[2]:
             self._path, self._index = [], 0
-            self.store.set("ring", "bubbles", builder())
+            self._store_root(builder())
             self._refresh()
 
     def _save_preset(self):
@@ -415,7 +479,7 @@ class RingPage(QWidget):
         if not accepted or not name:
             return
         saved = [entry for entry in self.store.cfg["ring"]["saved"] if entry["name"] != name]  # same name: replace
-        saved.append({"name": name, "bubbles": copy.deepcopy(self.store.cfg["ring"]["bubbles"])})
+        saved.append({"name": name, "bubbles": copy.deepcopy(self._root()[0])})
         self.store.set("ring", "saved", saved[-config.MAX_SAVED_RINGS:])
 
     def _delete_preset(self, name):
@@ -437,7 +501,7 @@ class RingPage(QWidget):
         self._edit(change)
 
     def _kind_changed(self, kind):
-        root = self.store.cfg["ring"]["bubbles"]
+        root = self._root()[0]
         level = self._level_of(root, self._valid_path(root))
         if not 0 <= self._index < len(level):
             return
@@ -446,11 +510,22 @@ class RingPage(QWidget):
         if kind == now:
             return
         if now == "folder" and current["children"]:
+            def shown():  # whose ring the page shows, a copy of it, whether it is edited here, the bubble chosen in it
+                profile = chosen_profile(self.store)
+                root, editable = self._root()
+                return ((None if profile is None else profile["app"]), copy.deepcopy(root), editable,
+                        self._valid_path(root), self._index)
+
+            before = shown()
             answer = QMessageBox.question(
                 self, APP_NAME, _("Stop this bubble being a folder? The {} bubbles inside it will be removed.").format(len(current["children"]))
             )
             if answer != QMessageBox.StandardButton.Yes:
                 self._refresh()
+                return
+            if shown() != before:  # changed while it asked: not the bubble the user said yes to
+                QMessageBox.information(self, APP_NAME, _(
+                    "Settings changed while this dialog was open. Choose the bubble type again."))
                 return
 
         def change(level, _root):
@@ -486,7 +561,8 @@ class RingPage(QWidget):
 
     def _refresh(self):
         cfg = self.store.cfg
-        root = cfg["ring"]["bubbles"]
+        root, editable = self._root()
+        profile = chosen_profile(self.store)
         self._path = self._valid_path(root)
         level = self._level_of(root, self._path)
         self._index = max(0, min(self._index, len(level) - 1)) if level else -1
@@ -499,10 +575,15 @@ class RingPage(QWidget):
         self.up.setVisible(bool(self._path))
         self.preview.set_level(
             level, self._index, center_text=names[-1] if self._path else "", back=bool(self._path),
-            ghost=len(level) < config.MAX_BUBBLES, style=cfg["ring"]["style"],
+            ghost=editable and len(level) < config.MAX_BUBBLES, style=cfg["ring"]["style"],
         )
         self.style.set_value(cfg["ring"]["style"])
-        self.editor.setEnabled(self._index >= 0)
+        self.presets.setEnabled(editable)
+        self.own.setVisible(profile is not None)
+        self.own.setText(_("Make a ring for this app") if not editable else _("Use the ring for all apps"))
+        self.shared.setVisible(profile is not None)
+        self.opens_with.setVisible(profile is None)
+        self.editor.setEnabled(editable and self._index >= 0)
         if self._index >= 0:
             self.editor.show_bubble(
                 level[self._index], self._index, len(level), may_be_folder=len(self._path) + 1 < config.MAX_RING_DEPTH
@@ -510,5 +591,6 @@ class RingPage(QWidget):
             self.editor.delete.setEnabled(bool(self._path) or len(level) > 1)
         self.size.set_value(cfg["ring"]["size"])
         self.button.set_value(next((key for key in config.GESTURE_BUTTONS if cfg["buttons"][key].get("type") == "ring"), None))
-        assigned = any(action.get("type") == "ring" for action in cfg["buttons"].values())
+        assigned = any(action.get("type") == "ring"
+                       for action in config.mouse_buttons(cfg, profile["app"] if profile else None).values())
         self.unassigned.setVisible(not assigned)

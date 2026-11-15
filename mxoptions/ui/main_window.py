@@ -11,11 +11,10 @@ from ..i18n import _
 from . import theme
 from .flow_page import FlowPage
 from .gestures_page import GesturesPage
+from .keyboard_page import CHARGING, KeyboardPage, KeysPage, battery_text
 from .pages import ButtonsPage, DevicePage, HapticsPage, PointScrollPage
 from .ring_page import RingPage
 from .widgets import ui_scale
-
-CHARGING = (device.BATTERY_CHARGING, device.BATTERY_ALMOST_FULL, device.BATTERY_SLOW_CHARGE)
 
 
 class BatteryIcon(QWidget):
@@ -113,6 +112,37 @@ class MainWindow(QMainWindow):
             side.addWidget(button)
             self.stack.addWidget(page)
         self._nav.button(0).setChecked(True)
+        # The keyboard, under the mouse: shown once one was seen, or its keys have settings.
+        self.keyboard_block = QWidget()
+        block = QVBoxLayout(self.keyboard_block)
+        block.setContentsMargins(0, 22, 0, 0)
+        block.setSpacing(4)
+        self.keyboard_name = QLabel()
+        self.keyboard_name.setObjectName("deviceName")
+        self.keyboard_name.setWordWrap(True)
+        block.addWidget(self.keyboard_name)
+        status_line = QHBoxLayout()
+        status_line.setSpacing(8)
+        self.keyboard_battery = BatteryIcon()
+        status_line.addWidget(self.keyboard_battery)
+        self.keyboard_status = QLabel()
+        self.keyboard_status.setObjectName("deviceStatus")
+        status_line.addWidget(self.keyboard_status, 1)
+        block.addLayout(status_line)
+        block.addSpacing(22)
+        for title, page in ((_("Keys"), KeysPage(store)), (_("Keyboard"), KeyboardPage(store))):
+            index = self.stack.count()
+            button = QPushButton(title)
+            button.setObjectName("navButton")
+            button.setCheckable(True)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(lambda _checked=False, i=index: self.stack.setCurrentIndex(i))
+            self._nav.addButton(button, index)
+            block.addWidget(button)
+            self.stack.addWidget(page)
+        self._keyboard_pages = range(len(pages), self.stack.count())
+        self.keyboard_block.hide()
+        side.addWidget(self.keyboard_block)
         side.addStretch(1)
         widest = max(button.fontMetrics().horizontalAdvance(title) for button, (title, _page) in zip(self._nav.buttons(), pages))
         sidebar.setFixedWidth(max(214, int(widest * 1.1) + 72))  # the stylesheet font is a little larger
@@ -137,7 +167,25 @@ class MainWindow(QMainWindow):
         layout.addLayout(right, 1)
 
         store.state_changed.connect(self._state)
+        store.changed.connect(self._show_keyboard)
         self._state(store.state)
+
+    def _show_keyboard(self):
+        found = self.store.state.get("keyboard")
+        shown = found is not None or bool(self.store.cfg["keyboard"]["keys"])
+        self.keyboard_block.setVisible(shown)
+        if not shown and self.stack.currentIndex() in self._keyboard_pages:
+            self._nav.button(0).setChecked(True)
+            self.stack.setCurrentIndex(0)
+        if not shown:
+            return
+        connected = bool(found and found["connected"])
+        self.keyboard_name.setText(found["name"] if found else _("Keyboard"))
+        battery = found.get("battery") if connected else None
+        self.keyboard_battery.set_level(*(battery[0], battery[1] in CHARGING or battery[1] == device.BATTERY_FULL)
+                                        if battery else (None, False))
+        self.keyboard_battery.setVisible(bool(battery))
+        self.keyboard_status.setText(battery_text(battery) if battery else _("Connected") if connected else _("Not connected"))
 
     def _state(self, state):
         connected = state["connected"]
@@ -147,17 +195,12 @@ class MainWindow(QMainWindow):
             percent, status = battery
             charging = status in CHARGING or status == device.BATTERY_FULL
             self.battery.set_level(percent, charging)
-            if status == device.BATTERY_FULL:
-                text = _("Fully charged")
-            elif status in CHARGING:
-                text = _("Charging · {}%").format(percent)
-            else:
-                text = f"{percent}%"
-            self.device_status.setText(text)
+            self.device_status.setText(battery_text(battery))
         else:
             self.battery.set_level(None, False)
             self.device_status.setText(_("Connected") if connected else _("Not connected"))
         self.battery.setVisible(bool(battery))
+        self._show_keyboard()
         rivals = state.get("rivals") or []
         self.banner_box.setVisible(not connected or bool(rivals))
         self.banner.setVisible(not connected)

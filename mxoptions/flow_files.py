@@ -262,3 +262,9 @@ class Receiver:
             shutil.rmtree(self._folder, ignore_errors=True)
         self._id = self._folder = None
         self._items = []
+
+    def discard(self, paths):
+        """Remove a set that arrived (``paths`` as end() gave them), now that nobody is to paste it."""
+        for folder in {os.path.dirname(path) for path in paths}:
+            if os.path.dirname(folder) == self.base:  # one of the sets received here, and nothing else
+                shutil.rmtree(folder, ignore_errors=True)

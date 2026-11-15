@@ -1,7 +1,9 @@
 """Small reusable widgets: switch, cards, setting rows, sliders, segmented control, info notes."""
 
+import math
+
 from PySide6.QtCore import Property, QEasingCurve, QPoint, QPointF, QPropertyAnimation, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFontMetricsF, QPainter, QPen
+from PySide6.QtGui import QColor, QFontMetricsF, QPainter, QPen, QTextLayout, QTextOption
 from PySide6.QtWidgets import (
     QAbstractButton, QApplication, QButtonGroup, QComboBox, QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel,
     QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget,
@@ -392,6 +394,53 @@ def hint_label(text):
     label.setObjectName("hint")
     label.setWordWrap(True)
     return label
+
+
+class LongWordHint(QLabel):
+    """A hint (see hint_label) that breaks a word too long for its line, such as an app's ID: up to 128 letters with
+    no space. QLabel keeps every word whole, so it asks for the whole word's width, squeezes what shares its row and
+    still clips the word. Here such a word breaks where the line ends; lines break between words wherever they can,
+    and while every word fits, QLabel lays out and draws the hint as any other. text() is unchanged."""
+
+    def __init__(self, text=""):
+        super().__init__(text)
+        self.setObjectName("hint")
+        self.setWordWrap(True)  # so layouts ask for the height at a width
+
+    def _lines(self, width):
+        layout = QTextLayout(self.text(), self.font())
+        option = QTextOption()
+        option.setWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+        layout.setTextOption(option)
+        layout.beginLayout()
+        height = 0.0
+        while (line := layout.createLine()).isValid():
+            line.setLineWidth(width)
+            line.setPosition(QPointF(0, height))
+            height += line.height()
+        layout.endLayout()
+        return layout, math.ceil(height)
+
+    def _words_fit(self, width):
+        return super().minimumSizeHint().width() <= width  # QLabel's minimum: its widest word
+
+    def minimumSizeHint(self):
+        return QSize(math.ceil(self._lines(0)[0].minimumWidth()), super().minimumSizeHint().height())
+
+    def heightForWidth(self, width):
+        if self._words_fit(width):
+            return super().heightForWidth(width)
+        margins = self.contentsMargins()
+        return self._lines(width - margins.left() - margins.right())[1] + margins.top() + margins.bottom()
+
+    def paintEvent(self, event):
+        if self._words_fit(self.width()):
+            return super().paintEvent(event)
+        rect = self.contentsRect()
+        layout, height = self._lines(rect.width())
+        painter = QPainter(self)
+        painter.setPen(self.palette().color(self.foregroundRole()))
+        layout.draw(painter, QPointF(rect.left(), rect.top() + max(0, rect.height() - height) / 2))  # centred, as QLabel
 
 
 class ColorSwatch(QAbstractButton):

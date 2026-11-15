@@ -53,6 +53,10 @@ class HidppClosed(HidppError):
     """The device went away (receiver unplugged, Bluetooth dropped)."""
 
 
+class HidppCancelled(HidppError):
+    """A background request gave way: it was called off, or its time ran out before it could be sent."""
+
+
 find_hidpp_nodes = hid.find_hidpp_nodes
 find_mouse_report_node = hid.find_mouse_report_node
 read_descriptor = hid.read_descriptor
@@ -68,7 +72,11 @@ class Transport:
         self.on_notification = on_notification
         self.on_closed = on_closed
         self._port = hid.Port(path)
-        self._request_lock = threading.Lock()
+        # One request at a time. Requests in the background (looking for a keyboard) only go when no other
+        # request is waiting, so they never hold up the mouse by more than the one already on its way.
+        self._admit = threading.Condition()
+        self._busy = False
+        self._waiting = 0  # foreground requests waiting for their turn
         self._pending = None  # (devidx, feat_idx, fn_byte)
         self._reply = None
         self._reply_ready = threading.Event()
@@ -95,6 +103,27 @@ class Transport:
             self._thread.join(timeout=1.0)
         self._port.close()
         self._reply_ready.set()
+        self._wake_waiting()
+
+    def _wake_waiting(self):
+        with self._admit:
+            self._admit.notify_all()
+
+    def can_tell_keys(self):
+        """Whether keys_held() can be asked here: a keyboard on a node of its own, of a kind whose answers are
+        understood (see hid_linux.Port.keys_layout). Reads only what the system says of the node."""
+        return not self.is_receiver and not self._closed and self._port.keys_layout() is not None
+
+    def keys_held(self, stop):
+        """Whether a key of the keyboard on this node is down now: True, False, or None when that cannot be told
+        (see hid_linux.Port.keys_held; ``stop()`` ends the asking). Takes no turn of the HID++ requests: it is not
+        one. Blocks: call it on the keyboard's thread only."""
+        if not self.can_tell_keys():
+            return None
+        try:
+            return self._port.keys_held(stop)
+        except (OSError, ValueError):
+            return None
 
     def _read_loop(self):
         while not self._closed:
@@ -107,6 +136,7 @@ class Transport:
                     log.info("%s went away", self.path)
                     self._closed = True
                     self._reply_ready.set()
+                    self._wake_waiting()
                     if self.on_closed:
                         self.on_closed(self)
                 return
@@ -150,16 +180,27 @@ class Transport:
         self._pending = None
         self._reply_ready.set()
 
-    def request(self, devidx, feat_idx, function, params=b"", timeout=1.5, no_reply=False):
-        """Send a feature request and return the reply payload (16 bytes for long reports)."""
+    def request(self, devidx, feat_idx, function, params=b"", timeout=1.5, no_reply=False,
+                background=False, deadline=None, cancel=None):
+        """Send a feature request and return the reply payload (16 bytes for long reports).
+
+        One request is in flight per transport. A foreground request (the default) waits for its turn
+        however long that takes, as it always has. A ``background`` one goes only while no foreground
+        request waits, and raises HidppCancelled instead once ``cancel`` (an Event) is set or ``deadline``
+        (time.monotonic) has passed; its wait for the reply ends at the deadline too."""
         fn_byte = ((function & 0x0F) << 4) | SWID
         packet = bytes([REPORT_LONG, devidx, feat_idx, fn_byte]) + bytes(params)
         if len(packet) > LONG_LEN:
             raise ValueError("HID++ payload too long")
         packet = packet.ljust(LONG_LEN, b"\0")
-        with self._request_lock:
-            if self._closed:
-                raise HidppClosed(self.path)
+        self._take_turn(background, deadline, cancel)
+        try:
+            if background and deadline is not None:
+                timeout = min(timeout, deadline - time.monotonic())
+                if timeout <= 0:
+                    raise HidppCancelled("out of time")
+            if cancel is not None and cancel.is_set():
+                raise HidppCancelled("called off")  # while it got its turn: the last moment it can be held back
             self._reply = None
             self._reply_ready.clear()
             self._pending = None if no_reply else (devidx, feat_idx, fn_byte)
@@ -172,15 +213,48 @@ class Transport:
                 return None
             if not self._reply_ready.wait(timeout):
                 self._pending = None
+                if background and deadline is not None and time.monotonic() >= deadline:
+                    raise HidppCancelled("out of time")
                 raise HidppTimeout(f"no reply from device {devidx} feature index {feat_idx:#04x} fn {function}")
             if self._closed and self._reply is None:
                 raise HidppClosed(self.path)
             kind, value = self._reply
+        finally:
+            with self._admit:
+                self._busy = False
+                self._admit.notify_all()
         if kind == "ok":
             return value
         if kind == "error1":
             raise HidppOffline(f"slot {devidx}: error {value:#04x}")
         raise HidppFeatureError(value)
+
+    def _take_turn(self, background, deadline, cancel):
+        """Wait until this request may go, and reserve the transport for it (see request)."""
+        with self._admit:
+            if not background:
+                self._waiting += 1
+                try:
+                    while self._busy and not self._closed:
+                        self._admit.wait()
+                finally:
+                    self._waiting -= 1
+                if self._closed:
+                    raise HidppClosed(self.path)
+                self._busy = True
+                return
+            while True:
+                if self._closed:
+                    raise HidppClosed(self.path)
+                if cancel is not None and cancel.is_set():
+                    raise HidppCancelled("called off")
+                left = None if deadline is None else deadline - time.monotonic()
+                if left is not None and left <= 0:
+                    raise HidppCancelled("out of time")
+                if not self._busy and not self._waiting:
+                    self._busy = True
+                    return
+                self._admit.wait(left)
 
     def ping(self, devidx, timeout=1.0, retries=0):
         """Return the (major, minor) HID++ protocol version, or None if nothing answers.
@@ -197,6 +271,43 @@ class Transport:
                 return None
             return reply[0], reply[1]
         return None
+
+
+class ProbeTransport:
+    """``transport`` as the thread that looks for a keyboard sees it: every request goes in the background
+    (see Transport.request), waits at most ``timeout`` s for its reply, and gives way with HidppCancelled once
+    ``cancel`` is set or ``deadline`` (time.monotonic) has passed."""
+
+    def __init__(self, transport, timeout, cancel, deadline):
+        self.transport = transport
+        self.timeout = timeout
+        self.cancel = cancel
+        self.deadline = deadline
+
+    path = property(lambda self: self.transport.path)
+    is_receiver = property(lambda self: self.transport.is_receiver)
+    closed = property(lambda self: self.transport.closed)
+
+    def slots(self):
+        return self.transport.slots()
+
+    def can_tell_keys(self):
+        return self.transport.can_tell_keys()
+
+    def keys_held(self, until):
+        """Transport.keys_held, given up (None) once ``cancel`` is set or ``until`` or the deadline (time.monotonic)
+        has passed: checked before each read."""
+        limit = min(self.deadline, until)
+
+        def stop():
+            return self.cancel.is_set() or time.monotonic() > limit
+        return None if stop() else self.transport.keys_held(stop)
+
+    def request(self, devidx, feat_idx, function, params=b"", timeout=1.5, no_reply=False):
+        return self.transport.request(devidx, feat_idx, function, params, timeout=min(timeout, self.timeout),
+                                      no_reply=no_reply, background=True, deadline=self.deadline, cancel=self.cancel)
+
+    ping = Transport.ping
 
 
 def mouse_layout(desc):

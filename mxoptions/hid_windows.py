@@ -182,6 +182,12 @@ class Port:
             threading.Thread(target=self._listen, args=(handle, LONG_LEN if index == 0 else SHORT_LEN),
                              name="hid-read", daemon=True).start()
 
+    def keys_layout(self):
+        """Never asked which keys are down (hidpp.Transport.can_tell_keys): the one way Windows has of telling,
+        GetAsyncKeyState, also answers 0 when it fails, for reasons its documentation does not finish listing, so
+        its 0 cannot be taken for "up". A keyboard here can be sent here from another computer, not on from here."""
+        return None
+
     def _listen(self, handle, length):
         event = kernel32.CreateEventW(None, True, False, None)
         buffer = ctypes.create_string_buffer(max(length, 64))

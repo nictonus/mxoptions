@@ -157,6 +157,28 @@ def places_pointer():
     return session() in ("x11", "windows")
 
 
+def ctrl_held():
+    """Whether a Ctrl key is held right now: True, False, or None where this desktop cannot say. Wayland tells a
+    program only of keys meant for its own windows. Asked each time, never kept."""
+    kind = session()
+    if kind == "windows":
+        from . import windows
+        return windows.ctrl_held()
+    if kind == "x11":
+        from . import x11
+        return x11.ctrl_held()
+    return None
+
+
+def ctrl_readable():
+    """Whether ctrl_held() can say anything on this desktop."""
+    kind = session()
+    if kind == "x11":
+        from . import x11
+        return x11.available()
+    return kind == "windows"
+
+
 def _keys(*names):
     return {"type": "keys", "keys": [f"KEY_{name}" for name in names]}
 

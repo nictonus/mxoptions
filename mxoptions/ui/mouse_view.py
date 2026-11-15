@@ -1,6 +1,7 @@
 """The mouse (its product picture or a 3D model) with a clickable callout per configurable button."""
 
 import logging
+import queue
 import threading
 
 from PySide6.QtCore import QEasingCurve, QPointF, QRectF, Qt, QTimer, QVariantAnimation, Signal
@@ -58,7 +59,6 @@ class Chip(QPushButton):
 
 class MouseView(QWidget):
     selected = Signal(str)
-    _rendered = Signal(object, object, object, object)  # key, image, top-left, shadow (from the render thread)
 
     def __init__(self, titles, parent=None):
         """``titles`` maps button key -> caption; only those keys get a callout."""
@@ -86,7 +86,11 @@ class MouseView(QWidget):
         self._wanted = []    # keys still to render, most urgent first
         self._rendering = False
         self._render_broken = False
-        self._rendered.connect(self._store_render)
+        # A worker touches no Qt object: any of them may be gone when it ends (Qt deletes them all with the
+        # application). It leaves its render here; the view takes it on its own thread, or never once it is gone.
+        self._done = queue.SimpleQueue()
+        self._collect = QTimer(self, interval=50)  # while a render is out; renders take far longer than this
+        self._collect.timeout.connect(self._take_render)
         self._settle = QTimer(self, singleShot=True, interval=160)
         self._settle.timeout.connect(self._prerender)
         self._chips = {}
@@ -270,6 +274,7 @@ class MouseView(QWidget):
         camera = self._camera(key[0])
         width, height = self.width(), self.height()
         self._rendering = True
+        done = self._done  # not the view: the worker must not keep it or reach it
 
         def job():
             try:
@@ -278,9 +283,15 @@ class MouseView(QWidget):
             except Exception:  # never leave the queue stuck
                 log.exception("studio render failed; using the plain model instead")
                 image = corner = shadow = None
-            self._rendered.emit(key, image, corner, shadow)
+            done.put((key, image, corner, shadow))
 
         threading.Thread(target=job, name="mouse-render", daemon=True).start()
+        self._collect.start()
+
+    def _take_render(self):
+        if not self._done.empty():  # this thread alone takes: what is there stays there
+            self._collect.stop()
+            self._store_render(*self._done.get())
 
     def _store_render(self, key, image, corner, shadow):
         self._rendering = False

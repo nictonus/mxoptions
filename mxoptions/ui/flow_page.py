@@ -43,7 +43,7 @@ class FlowMap(QWidget):
         self._hover = None
 
     def set_state(self, here, peers, corner, mouse_here, enabled, selected):
-        """``peers``: [{"pair", "edge", "name", "linked", "mouse": the mouse is on it}]."""
+        """``peers``: [{"pair", "edge", "name", "linked", "paused", "mouse": the mouse is on it}]."""
         state = (here, tuple(tuple(sorted(peer.items())) for peer in peers), corner, mouse_here, enabled, selected)
         if state != self._state:
             self._state = state
@@ -147,14 +147,14 @@ class FlowMap(QWidget):
             painter.setPen(QPen(QColor(theme.BORDER), 4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
             painter.drawLine(start, end)
             if enabled:
-                lit = QColor(theme.ACCENT if peer["linked"] else theme.MUTED)
+                lit = QColor(theme.ACCENT if peer["linked"] and not peer["paused"] else theme.MUTED)
                 painter.setPen(QPen(lit, 4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
                 painter.drawLine(start + (end - start) * corner, start + (end - start) * (1.0 - corner))
         self._computer(painter, here, here_name, _("This computer"), True, mouse_here)
         for peer in peers:
-            caption = _("Connected") if peer["linked"] else _("Not connected")
-            self._computer(painter, slots[peer["edge"]], peer["name"] or _("The other one"), caption, peer["linked"], peer["mouse"],
-                           picked=len(peers) > 1 and peer["pair"] == selected)
+            caption = _("Paused") if peer["paused"] else _("Connected") if peer["linked"] else _("Not connected")
+            self._computer(painter, slots[peer["edge"]], peer["name"] or _("The other one"), caption,
+                           peer["linked"] and not peer["paused"], peer["mouse"], picked=len(peers) > 1 and peer["pair"] == selected)
 
 
 class FlowPage(ScrollPage):
@@ -168,6 +168,7 @@ class FlowPage(ScrollPage):
         self.store = store
         self._offers_shown = None
         self._paired_shown = None
+        self._uses = {}       # pairing -> the switch that pauses that computer
         self._codes = {}      # offer id -> the line edit its code is typed into
         self._selected = ""   # the pairing of the computer the picture and the fields below are about
 
@@ -253,6 +254,30 @@ class FlowPage(ScrollPage):
             _("Cross while a full-screen window is in front"),
             _("Off, a game or a film in full screen keeps the mouse however hard you push."),
             self.fullscreen))
+        self.ctrl = Switch()
+        self.ctrl.setAccessibleName(_("Cross only while Ctrl is held"))
+        self.ctrl.toggled.connect(lambda on: self.store.set("flow", "hold_ctrl", on))
+        self.ctrl_row = card.add(Row(
+            _("Cross only while Ctrl is held"),
+            _("Hold either Ctrl key while pushing past the edge, so that only reaching the edge keeps the mouse here. "
+              "The action “Move to the other computer (Flow)” and the Easy-Switch buttons do not need it."),
+            self.ctrl, note=" "))
+        self.follow = Switch()
+        self.follow.toggled.connect(lambda on: self.store.set("flow", "mouse_follows_keyboard", on))
+        self.follow_row = card.add(Row(
+            _("Mouse follows the keyboard"),
+            _("Switch the keyboard to one of these computers with its Easy-Switch key, and the mouse goes along. "
+              "Only between computers running MX Options; this is not Logitech's Easy-Switch of Options+."),
+            self.follow))
+        self.lead = Switch()
+        self.lead.toggled.connect(lambda on: self.store.set("flow", "keyboard_follows_mouse", on))
+        self.lead_row = card.add(Row(
+            _("Keyboard follows the mouse"),
+            _("Send the mouse to one of these computers and the keyboard goes along, when no key is held. Works "
+              "from Linux with a Bluetooth keyboard; not yet tried with a real keyboard. Windows can receive the "
+              "keyboard but cannot send it on; use the keyboard's Easy-Switch key there."),
+            self.lead))
+        self.crossing_card = card
         self.body.addWidget(card)
 
         # what goes along
@@ -387,6 +412,10 @@ class FlowPage(ScrollPage):
         name = peer["name"] or _("the other computer")
         channel = peer["channel"]
         known = isinstance(channel, int) and not isinstance(channel, bool) and channel >= 0
+        if peer["paused"]:
+            return _("{} is paused: from now on the mouse does not cross to it or back, and nothing copied goes along; "
+                     "a switch already under way still finishes. The mouse's Easy-Switch button still switches to it."
+                     ).format(name)
         if not peer["linked"]:
             return _("Looking for {}…").format(name)
         if peer.get("quiet"):
@@ -426,11 +455,12 @@ class FlowPage(ScrollPage):
             status = service.status()
         else:  # the page on its own, as when it is drawn for the documentation
             status = {"supported": flow.supported(), "on": False, "address": "", "problem": "", "channel": cfg["channel"],
-                      "here": bool(self.store.state["connected"]), "edges": True, "edge_watch": "", "copies": True, "rich": True,
+                      "here": bool(self.store.state["connected"]), "edges": True, "edge_watch": "", "ctrl": True, "copies": True, "rich": True,
                       "pairing": None,
                       "transfer": None, "offers": [], "pair_error": "",
                       "peers": [{"pair": flow.pair_id(entry["key"]), "name": entry["name"], "edge": entry["edge"], "address": entry["address"],
-                                 "key": entry["key"], "linked": False, "channel": None, "present": False, "quiet": False}
+                                 "key": entry["key"], "linked": False, "channel": None, "present": False, "quiet": False,
+                                 "paused": entry.get("paused") is True}
                                 for entry in cfg["peers"]]}
         peers, pairing = status["peers"], status["pairing"]
         if self._selected not in [peer["pair"] for peer in peers]:
@@ -441,7 +471,7 @@ class FlowPage(ScrollPage):
         self.enabled.setEnabled(status["supported"] and bool(peers))
         self.head.note.setText(self._status_text(cfg, status))
         self.map.set_state(socket.gethostname(), [
-            {"pair": peer["pair"], "edge": peer["edge"], "name": peer["name"], "linked": peer["linked"],
+            {"pair": peer["pair"], "edge": peer["edge"], "name": peer["name"], "linked": peer["linked"], "paused": peer["paused"],
              "mouse": peer["present"] and not status["here"]} for peer in peers],
             cfg["corner"] / 100.0, status["here"], status["supported"], self._selected)
         if len(peers) > 1:
@@ -462,21 +492,37 @@ class FlowPage(ScrollPage):
             self.transfer_row.note.setText("  ·  ".join(parts))
 
         # pairing
-        shown = tuple((peer["pair"], peer["name"], peer["linked"]) for peer in peers)
+        shown = tuple((peer["pair"], peer["name"], peer["linked"], peer["paused"]) for peer in peers)
         if shown != self._paired_shown:
             self._paired_shown = shown
+            focused = next((pair for pair, use in self._uses.items() if use is self.window().focusWidget()), None)
+            self._uses = {}
             while self.paired_layout.count():
                 item = self.paired_layout.takeAt(0)
                 if item.widget():
                     item.widget().deleteLater()
             for peer in peers:
                 name = peer["name"] or _("the other computer")
+                use = Switch()
+                use.set_checked_silently(not peer["paused"])
+                use.setAccessibleName(_("Use {} with Flow").format(name))
+                use.toggled.connect(lambda on, p=peer["pair"]: self.store.flow and self.store.flow.set_paused(p, not on))
+                self._uses[peer["pair"]] = use
                 forget = QPushButton(_("Forget"))
                 forget.setCursor(Qt.CursorShape.PointingHandCursor)
                 forget.clicked.connect(lambda _checked=False, p=peer["pair"], n=name: self._forget(p, n))
-                self.paired_layout.addWidget(Row(
-                    _("Paired with {}").format(name), None, forget,
-                    note=_("Connected, everything between the two is encrypted.") if peer["linked"] else _("Not connected right now.")))
+                controls = QWidget()
+                line = QHBoxLayout(controls)
+                line.setContentsMargins(0, 0, 0, 0)
+                line.setSpacing(14)
+                line.addWidget(use)
+                line.addWidget(forget)
+                note = (_("Paused. It stays paired: switch it on to use it with Flow again.") if peer["paused"]
+                        else _("Connected, everything between the two is encrypted.") if peer["linked"]
+                        else _("Not connected right now."))
+                self.paired_layout.addWidget(Row(_("Paired with {}").format(name), None, controls, note=note))
+            if focused in self._uses:
+                self._uses[focused].setFocus()  # a switch flipped from the keyboard keeps the focus
         self.paired.setVisible(bool(peers))
         room = len(peers) < flow.MAX_PEERS
         self.pair_card.set_row_visible(self.start_row, room and pairing is None)
@@ -529,6 +575,19 @@ class FlowPage(ScrollPage):
         self.push.set_value(cfg["push_mm"])
         self.corner.set_value(cfg["corner"])
         self.fullscreen.set_checked_silently(cfg["fullscreen"])
+        readable = status.get("ctrl", True)
+        self.ctrl.set_checked_silently(cfg["hold_ctrl"])
+        self.ctrl.setEnabled(readable or cfg["hold_ctrl"])  # can always be switched off
+        self.ctrl_row.note.setText(
+            "" if readable
+            else _("This desktop does not tell MX Options whether Ctrl is held: while this is on, the edge keeps the "
+                   "mouse here. The action “Move to the other computer (Flow)” still sends it.") if cfg["hold_ctrl"]
+            else _("This desktop does not tell MX Options whether Ctrl is held, so this cannot be used here."))
+        self.ctrl_row.note.setVisible(not readable)
+        self.follow.set_checked_silently(cfg["mouse_follows_keyboard"])
+        self.crossing_card.set_row_visible(self.follow_row, self.store.state.get("keyboard") is not None)
+        self.lead.set_checked_silently(cfg["keyboard_follows_mouse"])
+        self.crossing_card.set_row_visible(self.lead_row, self.store.state.get("keyboard") is not None)
         copies = status.get("copies", True)
         self.clipboard.set_checked_silently(cfg["clipboard"] and copies)
         self.clipboard.setEnabled(copies)

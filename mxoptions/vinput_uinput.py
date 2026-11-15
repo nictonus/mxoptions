@@ -5,7 +5,7 @@ import time
 
 from evdev import AbsInfo, UInput, ecodes as e
 
-from .vinput import MOUSE_BUTTONS, ASCII_KEYS, _Wheel, key_code
+from .vinput import MOUSE_BUTTONS, ASCII_KEYS, Holds, _Wheel, key_code
 
 
 class _Device(UInput):
@@ -37,7 +37,7 @@ class VirtualInput:
         self._lock = threading.Lock()
         self._vwheel = _Wheel(e.REL_WHEEL_HI_RES, e.REL_WHEEL)
         self._hwheel = _Wheel(e.REL_HWHEEL_HI_RES, e.REL_HWHEEL)
-        self._held = set()
+        self._holds = Holds(self._key)
 
     def close(self):
         self.release_all()
@@ -47,30 +47,25 @@ class VirtualInput:
             except OSError:
                 pass
 
-    def _set(self, names, value):
-        for name in names:
-            code = key_code(name)
-            if code is None:
-                continue
-            dev = self._mouse if name in MOUSE_BUTTONS else self._kbd
-            dev.write(e.EV_KEY, code, value)
-            dev.syn()
-            (self._held.add if value else self._held.discard)(name)
+    def _key(self, name, down):
+        code = key_code(name)
+        if code is None:
+            return
+        dev = self._mouse if name in MOUSE_BUTTONS else self._kbd
+        dev.write(e.EV_KEY, code, 1 if down else 0)
+        dev.syn()
 
-    def press(self, names):
+    def press(self, names, owner="mouse"):
         with self._lock:
-            self._set(list(names), 1)
+            self._holds.press(list(names), owner)
 
-    def release(self, names):
+    def release(self, names, owner="mouse"):
         with self._lock:
-            self._set(list(reversed(list(names))), 0)
+            self._holds.release(list(names), owner)
 
     def tap(self, names):
-        names = list(names)
         with self._lock:
-            self._set(names, 1)
-            time.sleep(0.012)
-            self._set(list(reversed(names)), 0)
+            self._holds.tap(list(names))
 
     def type_ascii(self, text):
         """Type text key by key. Only right on a US layout; unknown characters are skipped."""
@@ -82,13 +77,10 @@ class VirtualInput:
             self.tap(["KEY_LEFTSHIFT", name] if entry[1] else [name])
             time.sleep(0.004)
 
-    def release_all(self):
+    def release_all(self, owner=None):
+        """Let go of the keys and buttons ``owner`` holds, or with None of everything."""
         with self._lock:
-            if self._held:
-                try:
-                    self._set(list(self._held), 0)
-                except OSError:
-                    pass
+            self._holds.release_all(owner)
 
     def scroll(self, delta):
         """Vertical scroll in hi-res units (120 = one detent, positive = up)."""

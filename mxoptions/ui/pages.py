@@ -1,14 +1,16 @@
 """The pages of the main window."""
 
+import copy
+import os
 import sys
 import threading
 import time
 
-from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtCore import QObject, QStandardPaths, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QApplication, QColorDialog, QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea,
-    QVBoxLayout, QWidget,
+    QApplication, QColorDialog, QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton,
+    QScrollArea, QVBoxLayout, QWidget,
 )
 
 from .. import APP_NAME, __version__, actions, api, config, desktop, device, firmware
@@ -16,10 +18,12 @@ from ..i18n import _
 from .action_picker import ActionPicker
 from . import mouse_photo
 from .mouse_view import MouseView
+from .recorder import ShortcutRecorder
 from . import theme
 from . import tray_icon
 from .widgets import (
-    Card, ElidedLabel, IconChoice, InfoButton, PatternRow, Row, Segmented, SliderRow, SwatchRow, Switch, hint_label, titled,
+    Card, ElidedLabel, IconChoice, InfoButton, LongWordHint, PatternRow, Row, Segmented, SliderRow, SwatchRow, Switch,
+    hint_label, titled,
 )
 
 BUTTON_TITLES = {
@@ -47,6 +51,28 @@ THUMB_LABELS = {
     "tabs": "Switch tabs",
     "desktops": "Switch desktops",
     "brightness": "Brightness",
+    "keys": "Custom keystrokes",
+}
+PANNED = ("spreadsheet", "documents")  # suggested sets after Logi Options+ rows that pan while the middle button is held
+PRESET_NOTES = {  # what a suggested set without a row of Logi Options+ behind it is, and where it works
+    "zoom": "Own choice from Zoom's default shortcuts, not a set of Logi Options+: back sends Alt+A (mute or unmute "
+            "your audio), forward Alt+V (start or stop your video), once per press. They work while Zoom is in front "
+            "and its shortcuts are unchanged. Keys are key positions: on a layout where A or V sit elsewhere (French, "
+            "for one), other shortcuts are sent.",
+    "teams": "Own choice from the default shortcuts of the Teams desktop app for Windows, not a set of Logi Options+: "
+             "back sends Ctrl+Shift+M (mute or unmute), forward Ctrl+Shift+O (video on or off), once per press. They "
+             "work while Teams is in front and its shortcuts are unchanged. Microsoft lists them for the US layout; "
+             "keys are key positions.",
+    "photoshop": "Own choice after the Windows shortcuts Adobe documents, not the settings of Logi Options+. "
+                 "Adobe names [ and ] for the brush size of Pattern Stamp and Spot Healing Brush; for other tools "
+                 "it does not say. With \"Use Legacy Undo Shortcuts\" on, Ctrl+Z works otherwise. These are key "
+                 "positions of a US keyboard: with another layout, or shortcuts changed in the app, they may do "
+                 "something else.",
+    "premiere": "Own choice after the Windows shortcuts Adobe documents, not the settings of Logi Options+. Page "
+                "Down and Page Up show the next and the previous screen of the Timeline: a whole screen per step, "
+                "not smooth scrolling. Adobe says the pointer must be over the Timeline; its list of shortcuts says "
+                "the panel must have focus. These are key positions of a US keyboard: with another layout, or "
+                "shortcuts changed in the app, they may do something else.",
 }
 HAPTIC_PRESETS = [(25, "Subtle"), (45, "Low"), (60, "Medium"), (100, "High")]
 CLICK_MODE_LABELS = [("off", "Off"), ("haptic", "Vibration"), ("sound", "Sound"), ("both", "Both")]
@@ -88,6 +114,177 @@ class ScrollPage(QWidget):
         self.body.addStretch(1)
 
 
+class AppChooser(QWidget):
+    """Whose mouse settings a page shows: all apps, or one app's (store.mouse_app), with adding and removing."""
+
+    def __init__(self, store, label, parent=None, suggest=False):
+        """``suggest``: offer the suggested settings (config.APP_PRESETS) while an app is chosen."""
+        super().__init__(parent)
+        self.store = store
+        self.when_chosen = lambda app: ""  # the hint while ``app`` is chosen; the page says what it means there
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(8)
+        line = QHBoxLayout()
+        line.setSpacing(8)
+        text = QLabel(label)
+        self.apps = QComboBox()
+        self.apps.setObjectName("appChoice")  # the part of the line that gives way when it is short: see theme
+        self.apps.setAccessibleName(label)
+        text.setBuddy(self.apps)
+        self.add_app = QPushButton(_("Add app"))
+        self.remove_app = QPushButton(_("Remove"))
+        self.remove_app.setAccessibleName(_("Remove the settings of this app"))
+        for button in (self.add_app, self.remove_app):
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+        line.addWidget(text)
+        line.addWidget(self.apps, 1)
+        line.addWidget(self.add_app)
+        line.addWidget(self.remove_app)
+        outer.addLayout(line)
+        self.hint = LongWordHint()  # it may name an app by its ID, a single word of up to 128 letters
+        self.suggest = None
+        if suggest:  # beside the hint, as the line above is full in some languages
+            self.suggest = QPushButton(_("Suggested settings"), self)  # parent first: Tab after Remove; Qt adds the arrow
+            self.suggest.setCursor(Qt.CursorShape.PointingHandCursor)
+            menu = QMenu(self.suggest)
+            for preset in config.offered_presets():
+                menu.addAction(_(config.APP_PRESETS[preset][0]), lambda p=preset: self._suggest(p))
+            self.suggest.setMenu(menu)
+            below = QHBoxLayout()
+            below.setSpacing(8)
+            below.addWidget(self.hint, 1)
+            below.addWidget(self.suggest, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+            outer.addLayout(below)
+        else:
+            outer.addWidget(self.hint)
+        self.apps.currentIndexChanged.connect(self._chosen)
+        self.add_app.clicked.connect(self._add)
+        self.remove_app.clicked.connect(self._remove)
+        store.changed.connect(self.refresh)
+        store.mouse_app_changed.connect(self.refresh)
+        if store.front is not None:
+            store.front.changed.connect(self.refresh)
+        self.refresh()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self.store.front is not None:
+            self.store.front.want(self, True)  # to know which app to offer to add
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        if self.store.front is not None:
+            self.store.front.want(self, False)
+
+    def refresh(self):
+        front = self.store.front
+        supported = front is None or front.supported
+        app = self.store.mouse_app
+        if app is not None and (not supported or self.store.mouse_profile(app) is None):
+            self.store.set_mouse_app(None)  # its profile went: all apps again
+            return
+        profiles = self.store.cfg["mouse"]["profiles"] if supported else []
+        entries = [(_("All apps"), None)] + [(profile["name"] or profile["app"], profile["app"]) for profile in profiles]
+        if [(self.apps.itemText(i), self.apps.itemData(i)) for i in range(self.apps.count())] != entries:
+            self.apps.blockSignals(True)
+            self.apps.clear()
+            for name, entry in entries:
+                self.apps.addItem(name, entry)
+            self.apps.blockSignals(False)
+        self.apps.blockSignals(True)
+        self.apps.setCurrentIndex(next(i for i, (_name, entry) in enumerate(entries) if entry == app))
+        self.apps.blockSignals(False)
+        self.apps.setEnabled(supported)
+        last = front.last_other if front is not None else None
+        self.add_app.setEnabled(bool(supported and last and self.store.mouse_profile(last) is None
+                                     and len(profiles) < config.MAX_PROFILES))
+        self.remove_app.setEnabled(app is not None)
+        if self.suggest is not None:
+            self.suggest.setVisible(app is not None)
+        if not supported:
+            text = _("This desktop does not tell which app is in front, so settings for one app cannot work here.")
+        elif app is not None:
+            text = self.when_chosen(app)
+        elif last and self.store.mouse_profile(last) is None:
+            text = _("To give an app its own settings, add it: {} was in front last.").format(last)
+        else:
+            text = _("To give an app its own settings, switch to it, then come back and add it.")
+        self.hint.setText(text)
+        self.hint.setVisible(bool(text))
+
+    def _chosen(self, index):
+        self.store.set_mouse_app(self.apps.itemData(index))
+
+    def _add(self):
+        front = self.store.front
+        app = front.last_other if front is not None else None
+        if app and self.store.add_mouse_profile(app):
+            self.store.set_mouse_app(app)
+
+    def _remove(self):
+        profile = self.store.mouse_profile(self.store.mouse_app)
+        if profile is None:
+            return
+        answer = QMessageBox.question(self, APP_NAME, _(
+            "Remove the settings of {}? There the mouse then works as in every app.").format(profile["name"] or profile["app"]))
+        if answer == QMessageBox.StandardButton.Yes:
+            self.store.remove_mouse_profile(profile["app"])
+
+    def _suggest(self, preset):
+        """Say what the suggested settings ``preset`` change for the app chosen now, and give them to it on Yes:
+        that app, whichever is chosen by then. The choice itself is never changed here."""
+        app = self.store.mouse_app
+        profile = self.store.mouse_profile(app)
+        if profile is None:
+            return
+        name, buttons, function = config.APP_PRESETS[preset]
+        setting, thumb = config.preset_changes(self.store.cfg, app, preset)
+        own = config.own_buttons(self.store.cfg, app)
+        stays = _("{control}: stays as set for this app ({value})")
+        lines = [_("Apply the suggested settings \"{preset}\" to {app}?").format(preset=_(name),
+                                                                               app=profile["name"] or app), ""]
+        for key, action in buttons.items():
+            title = _(BUTTON_TITLES[key])
+            lines.append(f"{title}: {actions.describe(action)}" if key in setting else
+                         stays.format(control=title, value=actions.describe(own[key])))
+        if function is not None:  # a set without one leaves the thumb wheel as it is: nothing to say
+            own = config.app_thumb_function(self.store.cfg, app)
+            lines.append(f"{_('Thumb wheel')}: {_(THUMB_LABELS[function])}" if thumb is not None else
+                         stays.format(control=_("Thumb wheel"), value=_(THUMB_LABELS[own])))
+        keys = config.preset_keys(self.store.cfg, app, preset)
+        mine = copy.deepcopy(config.app_thumb_keys(self.store.cfg, app))  # as named here: "keys" written wakes it
+        if preset in config.APP_PRESET_KEYS and (config.app_thumb_function(self.store.cfg, app) or function) == "keys":
+            for direction, title in (("up", _("Turning up")), ("down", _("Turning down"))):
+                lines.append(f"{title}: {actions.keys_label(keys[direction])}" if keys is not None else stays.format(
+                    control=title, value=actions.keys_label(mine[direction]) or _("Do nothing")))
+        if preset in PANNED:
+            lines += ["", _("Logi Options+ also pans while the middle button is held here. These settings leave the "
+                            "middle button as it is: to pan, give it Gestures for this app and choose Pan.")]
+        if preset in PRESET_NOTES:
+            lines += ["", _(PRESET_NOTES[preset])]
+        lines += ["", _("Everything else stays as it is. To undo one of these, choose \"As in all apps\" for it.")]
+        if keys is not None:
+            lines.append(_("To undo the keystrokes of the thumb wheel, choose \"Use the keystrokes for all apps\" on "
+                           "the Point & scroll page, before its function."))
+        if QMessageBox.question(self, APP_NAME, "\n".join(lines)) == QMessageBox.StandardButton.Yes:
+            current = self.store.mouse_profile(app)
+            if current is None:
+                return
+            if (current is not profile or config.preset_changes(self.store.cfg, app, preset) != (setting, thumb)
+                    or config.preset_keys(self.store.cfg, app, preset) != keys
+                    or thumb == "keys" and config.app_thumb_keys(self.store.cfg, app) != mine):
+                QMessageBox.information(self, APP_NAME, _(
+                    "Settings changed while this dialog was open. Choose Suggested settings again."))
+                return
+            self.store.apply_mouse_preset(app, preset)
+
+
+def chosen_profile(store):
+    """The mouse profile the pages show (store.mouse_app), or None: the settings for all apps."""
+    return store.mouse_profile(store.mouse_app)
+
+
 class ButtonsPage(QWidget):
     def __init__(self, store, parent=None):
         super().__init__(parent)
@@ -101,6 +298,11 @@ class ButtonsPage(QWidget):
         left.setContentsMargins(34, 28, 24, 20)
         left.setSpacing(8)
         left.addLayout(_header(_("Buttons"), _("Pick a button to choose what it does.")))
+        self.apps = AppChooser(store, _("Settings for"), suggest=True)
+        self.apps.when_chosen = lambda app: _(
+            "While {} is in front. \"As in all apps\": as set for all apps. \"Default\": the button's own function, "
+            "even where all apps change it.").format(app)
+        left.addWidget(self.apps)
         titles = {key: _(title) for key, (title, _value) in FIXED_BUTTONS.items()}
         titles.update((key, _(title)) for key, title in BUTTON_TITLES.items())
         self.view = MouseView(titles)
@@ -128,10 +330,17 @@ class ButtonsPage(QWidget):
         self.view.selected.connect(self._select)
         self.picker.changed.connect(self._changed)
         store.changed.connect(self._refresh)
+        store.mouse_app_changed.connect(self._app_changed)
         store.state_changed.connect(self._state)
         store.pressed_changed.connect(self.view.set_pressed)
         self._refresh()
         self.view.select("gesture")
+
+    def _app_changed(self):
+        self.apps.refresh()  # the list first: a page may be refreshed before its chooser
+        self._refresh()
+        if self._key is not None:
+            self._select(self._key)
 
     def _select(self, key):
         self._key = key
@@ -142,11 +351,21 @@ class ButtonsPage(QWidget):
                 "so this one cannot be given another action."
             ) + "\n\n" + _("The other way round works: any other button can be made a left or right click in its own list."))
         else:
-            self.picker.edit(_(BUTTON_TITLES[key]), self.store.cfg["buttons"][key], _(BUTTON_HINTS[key]) if BUTTON_HINTS[key] else "")
+            hint = _(BUTTON_HINTS[key]) if BUTTON_HINTS[key] else ""
+            profile = chosen_profile(self.store)
+            if profile is None:
+                self.picker.edit(_(BUTTON_TITLES[key]), self.store.cfg["buttons"][key], hint)
+            else:  # spotlight settings are for all apps only
+                self.picker.edit(_(BUTTON_TITLES[key]), config.own_buttons(self.store.cfg, profile["app"]).get(key), hint,
+                                 inherit=True, hide=("spotlight",), inherited=self.store.cfg["buttons"][key])
 
     def _changed(self, action):
         if self._key and self._key not in FIXED_BUTTONS:
-            self.store.set_button(self._key, action)
+            profile = chosen_profile(self.store)
+            if profile is None:
+                self.store.set_button(self._key, action)
+            else:
+                self.store.set_profile_button(profile["app"], self._key, action)
 
     def _download_photo(self):
         self._photo_error = ""
@@ -171,11 +390,13 @@ class ButtonsPage(QWidget):
             self.photo_text.setText(_(
                 "Logitech's own picture of the mouse can be shown here instead of this model. It is not included "
                 "with the program: download it from logitech.com (about 2.5 MB)."))
+        profile = chosen_profile(self.store)
+        buttons = config.mouse_buttons(self.store.cfg, profile["app"] if profile else None)
         for key in self.view.keys():
             if key in FIXED_BUTTONS:
                 self.view.set_value(key, _(FIXED_BUTTONS[key][1]))
             else:
-                self.view.set_value(key, actions.describe(self.store.cfg["buttons"][key]))
+                self.view.set_value(key, actions.describe(buttons[key]))
 
     def _state(self, state):
         caps = state.get("caps")
@@ -299,13 +520,45 @@ class PointScrollPage(ScrollPage):
 
         # thumb wheel
         card = Card(_("Thumb wheel"))
+        self.apps = card.add(AppChooser(store, _("Settings for")))  # whose function is shown: the rest is for all apps
+        self.apps.when_chosen = lambda app: _(
+            "While {} is in front. \"As in all apps\": the function set for all apps. Direction, speed and steps are "
+            "the same in every app; the keystrokes can be its own.").format(app)
         self.thumb_function = QComboBox()
         for key in config.THUMB_FUNCTIONS:
             self.thumb_function.addItem(_(THUMB_LABELS[key]), key)
-        self.thumb_function.activated.connect(
-            lambda index: self.store.set("thumbwheel", "function", self.thumb_function.itemData(index))
-        )
+        self.thumb_function.activated.connect(self._thumb_chosen)
         card.add(Row(_("Function"), None, self.thumb_function))
+        self.thumb_keys, self.thumb_keys_rows = {}, {}  # "up" / "down": (recorder, Record, Clear), its row
+        for direction, title, hint, record_name, clear_name in (
+                ("up", _("Turning up"),
+                 _("At most 20 keystrokes per second. Fast turns may skip steps; skipped steps do not run later."),
+                 _("Record the keystroke for turning up"), _("Clear the keystroke for turning up")),
+                ("down", _("Turning down"), None,
+                 _("Record the keystroke for turning down"), _("Clear the keystroke for turning down"))):
+            recorder = ShortcutRecorder()
+            record, clear = QPushButton(_("Record")), QPushButton(_("Clear"))
+            box = QWidget()
+            line = QHBoxLayout(box)
+            line.setContentsMargins(0, 0, 0, 0)
+            line.setSpacing(8)
+            line.addWidget(recorder, 1)
+            for button, name in ((record, record_name), (clear, clear_name)):
+                button.setObjectName("tool")
+                button.setCursor(Qt.CursorShape.PointingHandCursor)
+                button.setAccessibleName(name)
+                line.addWidget(button)
+            record.clicked.connect(lambda _checked=False, r=recorder: r.setFocus())
+            recorder.recorded.connect(lambda names, d=direction: self._thumb_keys_recorded(d, names))
+            clear.clicked.connect(lambda _checked=False, d=direction: self._thumb_keys_cleared(d))
+            self.thumb_keys[direction] = (recorder, record, clear)
+            self.thumb_keys_rows[direction] = row = card.add(Row(title, hint, box))
+            row.layout().setStretch(1, 1)
+        self.thumb_keys_global = QPushButton(_("Use the keystrokes for all apps"))
+        self.thumb_keys_global.setObjectName("tool")
+        self.thumb_keys_global.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.thumb_keys_global.clicked.connect(self._thumb_keys_use_global)
+        self.thumb_keys_own_row = card.add(Row(_("Keystrokes"), None, self.thumb_keys_global, note=""))
         self.thumb_invert = Switch()
         self.thumb_invert.toggled.connect(lambda on: self.store.set("thumbwheel", "invert", on))
         card.add(Row(_("Reverse direction"), None, self.thumb_invert))
@@ -315,7 +568,8 @@ class PointScrollPage(ScrollPage):
         self.thumb_ticks.toggled.connect(lambda on: self.store.set("thumbwheel", "ticks", on))
         self.thumb_ticks_row = card.add(Row(
             _("Feel the steps"),
-            _("This wheel turns smoothly, so each step of volume, tabs, desktops, brightness or zoom gets a tick."),
+            _("This wheel turns smoothly, so each step of volume, tabs, desktops, brightness, zoom or keystrokes gets "
+              "a tick."),
             self.thumb_ticks,
         ))
         self.thumb_card = card
@@ -323,8 +577,46 @@ class PointScrollPage(ScrollPage):
         self.finish()
 
         store.changed.connect(self._refresh)
+        store.mouse_app_changed.connect(self._app_changed)
         store.state_changed.connect(self._state)
         self._refresh()
+
+    def _app_changed(self):
+        self.apps.refresh()  # the list first: a page may be refreshed before its chooser
+        self._refresh()
+
+    def _thumb_chosen(self, index):
+        """A thumb wheel function picked: the chosen app's own (None: as in all apps), or the one for all apps."""
+        function = self.thumb_function.itemData(index)
+        profile = chosen_profile(self.store)
+        if profile is not None:
+            self.store.set_profile_thumb(profile["app"], function)
+        else:
+            self.store.set("thumbwheel", "function", function)
+
+    def _thumb_keys_recorded(self, direction, names):
+        self._thumb_keys_set(direction, list(names))
+        self.thumb_keys[direction][1].setFocus()  # back where recording started
+
+    def _thumb_keys_cleared(self, direction):
+        self._thumb_keys_set(direction, [])
+
+    def _thumb_keys_set(self, direction, names):
+        """The keystroke for turning ``direction``: the chosen app's own, its other one as it is there now; or the
+        one for all apps."""
+        profile = chosen_profile(self.store)
+        if profile is None:
+            self.store.set("thumbwheel", direction, names)
+            return
+        thumb = config.thumbwheel(self.store.cfg, profile["app"])
+        self.store.set_profile_thumb_keys(profile["app"], dict({"up": thumb["up"], "down": thumb["down"]},
+                                                               **{direction: names}))
+
+    def _thumb_keys_use_global(self):
+        profile = chosen_profile(self.store)
+        if profile is not None:
+            self.store.set_profile_thumb_keys(profile["app"], None)
+        self.thumb_keys["up"][1].setFocus()  # this button is off now: focus stays on the card
 
     # -- the mode switch click ----------------------------------------------------
 
@@ -371,8 +663,11 @@ class PointScrollPage(ScrollPage):
         for slider, key in ((self.click_pitch, "pitch"), (self.click_length, "length")):
             slider.set_value(click[key])
             slider.setEnabled(heard and click["sound"] != "custom")  # a file of the user's own is played as it is
+        profile = chosen_profile(self.store)
+        own = config.app_thumb_function(cfg, profile["app"]) if profile is not None else None
+        shown = own or cfg["thumbwheel"]["function"]  # what the thumb wheel does where the page looks
         self.thumb_ticks.set_checked_silently(cfg["thumbwheel"]["ticks"])
-        self.thumb_ticks_row.setEnabled(cfg["thumbwheel"]["function"] != "hscroll" and cfg["haptics"]["enabled"])
+        self.thumb_ticks_row.setEnabled(shown != "hscroll" and cfg["haptics"]["enabled"])
         self.dpi.set_value(cfg["pointer"]["dpi"])
         self.alt_dpi.set_value(cfg["pointer"]["alt_dpi"])
         self.precision_dpi.set_value(cfg["pointer"]["precision_dpi"])
@@ -388,9 +683,29 @@ class PointScrollPage(ScrollPage):
         self.wheel_speed.set_value(wheel["speed"])
         self.wheel_speed.setEnabled(wheel["smooth"])
         thumb = cfg["thumbwheel"]
-        self.thumb_function.setCurrentIndex(max(0, self.thumb_function.findData(thumb["function"])))
+        inherit = self.thumb_function.itemData(0) is None  # "As in all apps" offered: only while an app is chosen
+        if profile is not None and not inherit:
+            self.thumb_function.insertItem(0, _("As in all apps"), None)
+        elif profile is None and inherit:
+            self.thumb_function.removeItem(0)
+        self.thumb_function.setCurrentIndex(
+            0 if profile is not None and own is None else max(0, self.thumb_function.findData(own or thumb["function"])))
         self.thumb_invert.set_checked_silently(thumb["invert"])
         self.thumb_speed.set_value(thumb["speed"])
+        app = profile["app"] if profile is not None else None
+        sent = config.thumbwheel(cfg, app)  # the keystrokes where the page looks
+        for direction, (recorder, _record, clear) in self.thumb_keys.items():
+            self.thumb_card.set_row_visible(self.thumb_keys_rows[direction], shown == "keys")
+            recorder.set_keys(sent[direction])
+            clear.setEnabled(bool(sent[direction]))
+        mine = app is not None and config.app_thumb_keys(cfg, app) is not None
+        self.thumb_card.set_row_visible(self.thumb_keys_own_row, app is not None and shown == "keys")
+        self.thumb_keys_global.setEnabled(mine)
+        if app is not None:
+            name = profile["name"] or app
+            self.thumb_keys_own_row.note.setText(
+                _("{} has keystrokes of its own.").format(name) if mine else
+                _("As in all apps. Recording or clearing one here gives {} keystrokes of its own.").format(name))
 
     def _state(self, state):
         caps = state.get("caps")
@@ -425,6 +740,15 @@ class HapticsPage(ScrollPage):
         self.enabled = Switch()
         self.enabled.toggled.connect(lambda on: self.store.set("haptics", "enabled", on))
         card.add(Row(_("Haptic feedback"), None, self.enabled))
+        self.saving = Switch()
+        self.saving.setAccessibleName(_("Battery saving"))
+        self.saving.toggled.connect(lambda on: self.store.set("haptics", "battery_saving", on))
+        self.saving_row = card.add(Row(
+            _("Battery saving"),
+            _("At {percent}% battery or less the mouse does not vibrate, not even for patterns you try or for games; "
+              "above {percent}% it does again. What the mouse does by itself, as when it is switched on, stays.").format(
+                percent=device.HAPTIC_SAVING),
+            self.saving, note=_("Vibration is off now to save the battery.")))
         self.presets = Segmented([(value, _(label)) for value, label in HAPTIC_PRESETS])
         self.presets.selected.connect(self._preset)
         self.presets_row = card.add(Row(_("Intensity"), None, self.presets))
@@ -436,6 +760,14 @@ class HapticsPage(ScrollPage):
         self.feedback_row = card.add(Row(
             _("Feedback for actions"), _("A tick for gestures, the Actions Ring and mode changes."), self.feedback,
         ))
+        self.screens = Switch()
+        self.screens.setAccessibleName(_("Switching screens"))
+        self.screens.toggled.connect(lambda on: self.store.set("haptics", "screens", on))
+        self.screens_row = card.add(Row(
+            _("Switching screens"),
+            _("A short tick when the pointer moves onto another screen of this computer. Moving to another computer with "
+              "Flow does not count."),
+            self.screens, note=_("This desktop does not tell programs which screen the pointer is on.")))
         self.feedback_card = card
         self.body.addWidget(card)
 
@@ -527,10 +859,20 @@ class HapticsPage(ScrollPage):
     def _refresh(self):
         haptics = self.store.cfg["haptics"]
         self.enabled.set_checked_silently(haptics["enabled"])
+        self.saving.set_checked_silently(haptics["battery_saving"])
+        state = self.store.state
+        self.saving_row.note.setVisible(haptics["enabled"] and device.saving_battery(
+            haptics["battery_saving"], state.get("battery") if state.get("connected") else None))
         self.presets.set_value(haptics["level"])
         self.level.set_value(haptics["level"])
         self.feedback.set_checked_silently(haptics["feedback"])
-        for widget in (self.presets_row, self.level, self.feedback_row, self.pattern_card):
+        self.screens.set_checked_silently(haptics["screens"])
+        service = self.store.flow  # None: the page on its own, as for the documentation
+        followable = service is None or service.screens_followable()
+        self.screens.setEnabled(followable)
+        self.screens_row.note.setVisible(not followable)
+        self.screens.setAccessibleDescription("" if followable else self.screens_row.note.text())
+        for widget in (self.saving_row, self.presets_row, self.level, self.feedback_row, self.screens_row, self.pattern_card):
             widget.setEnabled(haptics["enabled"])
         if self._force_range and haptics.get("force"):
             low, high = self._force_range
@@ -691,6 +1033,18 @@ class DevicePage(ScrollPage):
         self.language = Segmented([("auto", _("Auto")), ("en", "English"), ("uk", "Українська")])
         self.language.selected.connect(self._language)
         self.language_row = card.add(Row(_("Language"), _("Takes effect after restarting the app."), self.language))
+        transfer = QWidget()
+        transfer_layout = QHBoxLayout(transfer)
+        transfer_layout.setContentsMargins(0, 0, 0, 0)
+        transfer_layout.setSpacing(10)
+        for label, slot in ((_("Export…"), self._export), (_("Import…"), self._import)):
+            button = QPushButton(label)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(slot)
+            transfer_layout.addWidget(button)
+        card.add(Row(_("Settings file"), None, transfer, note=_(
+            "Every setting in one file, your commands and scripts included: keep it private. The pairings of Flow "
+            "stay on this computer.")))
         reset = QPushButton(_("Restore defaults"))
         reset.setCursor(Qt.CursorShape.PointingHandCursor)
         reset.clicked.connect(self._reset)
@@ -801,6 +1155,33 @@ class DevicePage(ScrollPage):
         color = QColorDialog.getColor(QColor(self.store.cfg["app"]["accent"]), self, _("Accent colour"))
         if color.isValid():
             self.store.set("app", "accent", color.name())
+
+    def _export(self):
+        folder = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation)
+        path, _filter = QFileDialog.getSaveFileName(  # the dialog asks before it replaces a file
+            self, _("Export settings"), os.path.join(folder, "mxoptions-settings.json"), _("Settings (*.json)"))
+        if path:
+            failed = self.store.export_settings(path)
+            if failed:
+                QMessageBox.warning(self, APP_NAME, failed)
+            else:
+                QMessageBox.information(self, APP_NAME, _("The settings are in {}.").format(os.path.basename(path)))
+
+    def _import(self):
+        path, _filter = QFileDialog.getOpenFileName(self, _("Import settings"), "", _("Settings (*.json)"))
+        if not path:
+            return
+        answer = QMessageBox.question(self, APP_NAME, _(
+            "Replace every setting with the ones in {}? The settings you have now are kept in a backup first, and "
+            "the pairings of Flow stay as they are.").format(os.path.basename(path)))
+        if answer == QMessageBox.StandardButton.Yes:
+            failed = self.store.import_settings(path)
+            if failed:
+                QMessageBox.warning(self, APP_NAME, failed)
+            else:
+                QMessageBox.information(self, APP_NAME, _(
+                    "The settings of {} are in use. A change of language takes effect after restarting the "
+                    "app.").format(os.path.basename(path)))
 
     def _reset(self):
         answer = QMessageBox.question(self, APP_NAME, _("Reset every setting to its default?"))

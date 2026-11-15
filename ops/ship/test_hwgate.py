@@ -25,7 +25,7 @@ KEYBOARD = {"shared-receiver", "mixed-connections", "service-stop-restores-keys"
             "sleep-wake", "receiver-replug", "keyboard-battery", "shared-receiver-mouse-latency", "keyboard-identity"}
 CONTRACT = {  # group: (file, line copied from a build that has the capability, required checks, recorded checks)
     "keyboard": ("mxoptions/keyboard.py", "class KeyboardSide:", KEYBOARD,
-                 {"top-row-fn-modes", "bluetooth-zero-id-access", "windows-keyboard"}),
+                 {"top-row-fn-modes", "bluetooth-zero-id-access"}),
     "mouse-follows-keyboard": ("mxoptions/config.py", '        "mouse_follows_keyboard": False,  # takes the mouse along',
                                {"mouse-follows-keyboard"}, set()),
     "keyboard-follows-mouse": ("mxoptions/config.py", '        "keyboard_follows_mouse": False,  # takes the keyboard',
@@ -41,7 +41,61 @@ CONTRACT = {  # group: (file, line copied from a build that has the capability, 
     "backlight-effects": ("mxoptions/ui/keyboard_page.py", '    EFFECTS = ("Static", "Breathing", "Reaction")',
                           {"backlight-effect-ids-observed"}, set()),
     "lock-key-notices": ("mxoptions/keyboard.py", "        if dev.has(device.LOCK_KEY_STATE):", {"lock-key-notices"}, set()),
+    "mouse-battery-saving": ("mxoptions/config.py",
+                             '    "haptics": {"enabled": True, "level": 60, "force": None, "feedback": True, "battery_saving": True,',
+                             {"mouse-haptic-battery-saving", "mouse-low-battery-notice"}, set()),
+    "screen-switch-haptics": ("mxoptions/config.py", '                "screens": False},', {"screen-switch-haptic"}, set()),
+    "mouse-app-profiles": ("mxoptions/config.py",
+                           '    "mouse": {"profiles": [], "thumbwheel": [], "thumbwheel_keys": [], "gestures": []},',
+                           {"mouse-app-profiles-desktops", "app-suggestions-linux"}, set()),
+    "pan-zoom": ("mxoptions/gestures.py", 'HOLD_MODES = {"pan": "Pan (hold and move)", "zoom": "Zoom (hold and move)"}',
+                 {"pan-zoom"}, set()),
+    "spotlight": ("mxoptions/config.py", 'EFFECTS = ("highlight", "magnify", "laser")', {"spotlight-effects-desktops"}, set()),
+    "thumbwheel-keystrokes": ("mxoptions/config.py",
+                              'THUMB_FUNCTIONS = ("hscroll", "zoom", "volume", "tabs", "desktops", "brightness", "keys")',
+                              {"thumbwheel-keystrokes"}, set()),
+    "macro-stop-on-press": ("mxoptions/config.py", '_MACRO_FIELDS = frozenset({"type", "name", "repeat", "steps", "stop_on_press"})',
+                            {"macro-stop-on-press"}, set()),
+    "macro-files": ("mxoptions/config.py", 'MACRO_FORMAT = "mxoptions-macro"', {"macro-file-dialogs"}, set()),
+    "flow-peer-pause": ("mxoptions/config.py", '        if type(entry.get("paused")) is bool:', {"flow-peer-pause"}, set()),
+    "flow-hold-ctrl": ("mxoptions/config.py", '        "hold_ctrl": False,   # cross at the edge only while a Ctrl key is held; '
+                       'where that cannot be told, never', {"flow-hold-ctrl"}, set()),
+    "keyboard-ring-key": ("mxoptions/config.py", 'KEYBOARD_ACTIONS = ("none", "keys", "button", "shortcut", "desktop", "command", '
+                          '"script", "macro", "host", "hook", "ring")', {"keyboard-ring-key"}, set()),
+    "fn-lock-notices": ("mxoptions/config.py", '    cfg["keyboard"]["fn_notices"] = cfg["keyboard"].get("fn_notices") is True',
+                        {"fn-lock-notices"}, set()),
 }
+# Per capability of the Linux feature stack: the files whose code decides or carries out what its checks see. A change
+# to any one must move the digest and so void that capability's results: "paths" names each, "ungated" none.
+BEHAVIOUR = {
+    "mouse-battery-saving": ("mxoptions/config.py", "mxoptions/device.py", "mxoptions/engine.py", "mxoptions/api.py",
+                             "mxoptions/app.py", "mxoptions/keyboard.py", "mxoptions/ui/pages.py"),
+    "screen-switch-haptics": ("mxoptions/config.py", "mxoptions/engine.py", "mxoptions/flow_edges.py", "mxoptions/x11.py",
+                              "mxoptions/ui/pages.py"),
+    "mouse-app-profiles": ("mxoptions/config.py", "mxoptions/front.py", "mxoptions/engine.py", "mxoptions/app.py",
+                           "mxoptions/ui/store.py", "mxoptions/ui/pages.py", "mxoptions/ui/ring_page.py",
+                           "mxoptions/ui/gestures_page.py"),
+    "pan-zoom": ("mxoptions/gestures.py", "mxoptions/engine.py", "mxoptions/actions.py", "mxoptions/vinput.py",
+                 "mxoptions/vinput_uinput.py", "mxoptions/ui/action_picker.py", "mxoptions/ui/gestures_page.py"),
+    "spotlight": ("mxoptions/config.py", "mxoptions/actions.py", "mxoptions/engine.py", "mxoptions/environment.py",
+                  "mxoptions/x11.py", "mxoptions/ui/ring.py", "mxoptions/ui/ring_helper.py", "mxoptions/ui/RingSurface.qml",
+                  "mxoptions/ui/ring.qml", "mxoptions/ui/ring_window.qml"),
+    "thumbwheel-keystrokes": ("mxoptions/config.py", "mxoptions/engine.py", "mxoptions/vinput.py", "mxoptions/vinput_uinput.py",
+                              "mxoptions/ui/pages.py", "mxoptions/ui/store.py"),
+    "macro-stop-on-press": ("mxoptions/config.py", "mxoptions/actions.py", "mxoptions/engine.py", "mxoptions/keyboard.py",
+                            "mxoptions/ui/editors.py"),
+    "macro-files": ("mxoptions/config.py", "mxoptions/ui/editors.py"),
+    "flow-peer-pause": ("mxoptions/config.py", "mxoptions/flow.py", "mxoptions/flow_files.py", "mxoptions/flow_service.py",
+                        "mxoptions/flow_edges.py", "mxoptions/ui/flow_page.py"),
+    "flow-hold-ctrl": ("mxoptions/config.py", "mxoptions/engine.py", "mxoptions/environment.py", "mxoptions/x11.py",
+                       "mxoptions/flow_edges.py", "mxoptions/ui/flow_edge.qml", "mxoptions/ui/flow_page.py"),
+    "keyboard-ring-key": ("mxoptions/config.py", "mxoptions/keyboard.py", "mxoptions/engine.py", "mxoptions/app.py",
+                          "mxoptions/actions.py", "mxoptions/ui/ring.py", "mxoptions/ui/ring_helper.py",
+                          "mxoptions/ui/RingSurface.qml"),
+    "fn-lock-notices": ("mxoptions/config.py", "mxoptions/keyboard.py", "mxoptions/app.py", "mxoptions/ui/keyboard_page.py"),
+}
+# Version, translated text and docs: a change keeps every result.
+TEXT = ("mxoptions/__init__.py", "mxoptions/i18n_uk.py", "README.md")
 # Lines of current builds without device controls, which must not turn any group on.
 BASE = {
     "mxoptions/__init__.py": '__version__ = "0.10.0"\n', "mxoptions/hidpp.py": "h\n", "mxoptions/gestures.py": "g\n",
@@ -98,8 +152,50 @@ def errors(manifest, base):
     return out
 
 
+def edit(at, path):
+    """A commit on ``at`` with one more line in ``path``, a file ``at`` has."""
+    subprocess.run(["git", "checkout", "-q", "--detach", at], check=True)
+    with open(path, "a") as f:
+        f.write("# changed\n")
+    subprocess.run([*G, "commit", "-qam", "c"], check=True)
+    return subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+
+
+def stale(manifest, base):
+    """Where results would outlive a change: a BEHAVIOUR file whose change keeps the digest or the results, a TEXT file
+    whose change voids them. Empty when none. Every BEHAVIOUR capability is on, with a pass for each of its checks."""
+    out, lines = [], {}
+    for gid in BEHAVIOUR:
+        path, line = CONTRACT[gid][:2]
+        lines[path] = lines.get(path, "") + line + "\n"
+    for path in {p for files in BEHAVIOUR.values() for p in files} - set(lines) - set(BASE):
+        lines[path] = "x = 1\n"
+    stack = commit(base, **lines)
+    d = hwgate.check(stack, manifest, [])["digest"]
+    full = entries(d, gates_of(manifest, *BEHAVIOUR))
+    r = hwgate.check(stack, manifest, full)
+    if [g for g, v in r["groups"].items() if v["present"]] != list(BEHAVIOUR) or not r["stable"]:
+        out.append(f"stack: not stable with every result: {r}")
+    for path in TEXT:
+        r = hwgate.check(edit(stack, path), manifest, full)
+        if r["digest"] != d or not r["stable"]:
+            out.append(f"{path}: change voids results")
+    for path in sorted({p for files in BEHAVIOUR.values() for p in files}):
+        if hwgate.matches(path, manifest["ungated"]):
+            out.append(f"{path}: also ungated")
+        r = hwgate.check(edit(stack, path), manifest, full)
+        for gid, files in BEHAVIOUR.items():
+            g = r["groups"].get(gid)  # a group the manifest lost: "stack" above says so
+            if path in files and g and (r["digest"] == d or r["stable"] or not g["missing"]):
+                out.append(f"{gid}: {path} change keeps old results")
+    return out
+
+
 subprocess.run(["git", "init", "-q"], check=True)
 base = commit(**BASE)
+# First, so a behaviour file missing from "paths" fails here, by what it does to results, before anything else.
+s = stale(MANIFEST, base)
+assert s == [], s
 r = hwgate.check(base, MANIFEST, [])
 assert r["stable"] and not r["unclassified"] and not any(g["present"] for g in r["groups"].values()), r
 
@@ -131,6 +227,17 @@ for g in m["groups"]:
     if g["id"] == "fn-lock":  # a probe on the file alone, or on a name the code does not use
         g["present"] = ["mxoptions/kbsettings.py:^class FnLockCodec\\b"]
 assert "fn-lock: probe does not see the capability" in errors(m, base)
+# A behaviour file out of "paths", ungated or named nowhere, is caught by the results it would keep; the version in
+# "paths" by the results it would void.
+for path, gid in (("mxoptions/flow_edges.py", "flow-hold-ctrl"), ("mxoptions/ui/RingSurface.qml", "spotlight")):
+    for named in ([path], []):
+        m = copy.deepcopy(MANIFEST)
+        m["paths"] = [g for g in m["paths"] if not hwgate.matches(path, [g])]
+        m["ungated"] += named
+        assert f"{gid}: {path} change keeps old results" in stale(m, base), (path, named)
+m = copy.deepcopy(MANIFEST)
+m["paths"].append("mxoptions/__init__.py")
+assert "mxoptions/__init__.py: change voids results" in stale(m, base)
 
 # A build like the reviewed keyboard stack: keyboard, both follow settings and profiles present.
 on = ("keyboard", "mouse-follows-keyboard", "keyboard-follows-mouse", "keyboard-app-profiles")

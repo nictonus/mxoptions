@@ -1,17 +1,20 @@
 """Rumble from games: what a game stores and plays on the virtual gamepad, and what the mouse plays for it.
 Also what makes other mice than the MX Master 4 work: their battery, and which picture they get."""
 
+import copy
 import struct
 import sys
+import types
 import unittest
+from unittest import mock
 
 if sys.platform == "win32":
     raise unittest.SkipTest("the virtual gamepad is made with uinput, which is Linux's")
 
 from evdev import ecodes as e  # noqa: E402
 
-from tests.support import make_engine  # noqa: E402
-from mxoptions import device, rumble  # noqa: E402
+from tests.support import Actions, FakeInput, Mouse, Recorder, make_engine  # noqa: E402
+from mxoptions import config, device, engine, flow_service, hidpp, keyboard, rumble  # noqa: E402
 
 
 def effect(kind, effect_id=0, length=0, strong=0, weak=0, magnitude=0):
@@ -109,6 +112,269 @@ class OnTheMouse(unittest.TestCase):
         self.engine.cfg["rumble"]["light"] = None
         self.engine._rumble_level(0.1)
         self.assertEqual(self.played, [])
+
+
+class Wire:
+    """Where a synthetic device.Mouse's requests go: each kept as (feature id, function) and answered with zeros;
+    the features in ``refuse`` answer with an error."""
+
+    is_receiver = True
+
+    def __init__(self, refuse=()):
+        self.sent, self.refuse, self.features = [], set(refuse), {}
+
+    def request(self, devidx, index, function, params=b"", **_kwargs):
+        feature = self.features[index]
+        self.sent.append((feature, function))
+        if feature in self.refuse:
+            raise hidpp.HidppError("refused")
+        return bytes(16)
+
+    def played(self):
+        return [sent for sent in self.sent if sent == (device.HAPTIC, 4)]
+
+
+def motor(refuse=()):
+    """A made-up mouse with a haptic motor, as far as the engine talks to it, over a Wire."""
+    wire = Wire(refuse)
+    made = device.Mouse(wire, 1)
+    made.features = {feature: index for index, feature in
+                     enumerate((device.ROOT, device.HAPTIC, device.UNIFIED_BATTERY, device.ADJUSTABLE_DPI,
+                                device.THUMB_WHEEL))}
+    made.index_to_feature = wire.features = {index: feature for feature, index in made.features.items()}
+    made.name, made.haptic_waveforms, made.dpi_range = "Synthetic mouse", list(device.WAVEFORMS), Mouse.dpi_range
+    made.thumbwheel = dict(Mouse.thumbwheel)
+    return made
+
+
+def saver(battery, saving=True):
+    """An engine with the engine's own vibration path to a motor() whose last reading is ``battery``."""
+    cfg = copy.deepcopy(config.DEFAULTS)
+    cfg["haptics"]["battery_saving"] = saving
+    cfg["thumbwheel"].update(function="tabs", ticks=True)
+    made = engine.Engine(cfg, Recorder())
+    made.executor = Actions()
+    made.mouse, made.online, made._battery = motor(), True, battery
+    return made
+
+
+def drain(made):
+    while not made._queue.empty():
+        made._handle(made._queue.get_nowait())
+
+
+def mouse_macro(made):
+    with mock.patch.object(engine.vinput, "create", FakeInput), mock.patch.object(made.keyboard, "start"), \
+            mock.patch.object(made.keyboard, "shutdown"):
+        mouse, made.mouse, made._running = made.mouse, None, False
+        made._run()  # how the engine makes the executor of the mouse's buttons
+        made.mouse = mouse
+    made.executor.macros._step({"do": "haptic", "waveform": 7})
+    drain(made)
+
+
+def key_macro(made):
+    with mock.patch.object(keyboard.threading, "Thread"):
+        made.keyboard.start()  # how the engine makes the executor of the keyboard's keys
+    made.keyboard.executor.macros._step({"do": "haptic", "waveform": 7})
+    drain(made)
+
+
+def flow_cue(made):
+    store = types.SimpleNamespace(cfg=made.cfg, state={"connected": True}, engine=made)
+    flow_service.FlowService._cue(types.SimpleNamespace(store=store), "arrived", None)
+    drain(made)
+
+
+def screen_cue(made):
+    made.cfg["haptics"]["screens"] = True
+    made.screen_cue()
+    drain(made)
+
+
+def gesture_cue(made):
+    made._gesture_cue(next(name for name, waveform in made.cfg["gestures"]["cues"].items() if waveform is not None))
+
+
+# Every way something asks the mouse to vibrate, through its real way in
+PRODUCERS = {
+    "a pattern tried on a page or asked for by another program": lambda made: (made.play_haptic(0x0C), drain(made)),
+    "a cue of the Actions Ring": lambda made: (made.feedback(0x0C), drain(made)),
+    "a vibration step of a mouse macro": mouse_macro,
+    "a vibration step of a key macro": key_macro,
+    "a cue of Flow": flow_cue,
+    "a cue of a gesture": gesture_cue,
+    "the pointer going onto another screen": screen_cue,
+    "the pointer speed switched by a button": lambda made: made._device_action({"type": "dpi_cycle"}, "press"),
+    "ticks of the thumb wheel": lambda made: made._on_thumbwheel(-600),
+    "the wheel letting go": lambda made: made._wheel_changed("freespin", "spun"),
+    "a pulse of game rumble": lambda made: made._rumble_pulse(0.0),
+    "the rumble test": lambda made: made._handle(("rumble", "test", 1.0)),
+}
+
+
+class BatterySaving(unittest.TestCase):
+    """With battery saving on, a mouse at 10 % or less is sent no vibration from anywhere; above that, or with it off,
+    everything vibrates as before. Nothing is sent to the mouse for it."""
+
+    def played(self, battery, saving=True, producers=PRODUCERS):
+        counts = {}
+        for name, produce in producers.items():
+            made = saver(battery, saving)
+            produce(made)
+            counts[name] = len(made.mouse.transport.played())
+        return counts
+
+    def test_from_anywhere_nothing_vibrates_at_10_percent_and_all_as_before_above(self):
+        before = self.played((10, device.BATTERY_DISCHARGING), saving=False)
+        self.assertTrue(all(before.values()), before)  # each of them vibrates the mouse
+        self.assertEqual(self.played((10, device.BATTERY_DISCHARGING)), dict.fromkeys(PRODUCERS, 0))
+        self.assertEqual(self.played((1, device.BATTERY_DISCHARGING)), dict.fromkeys(PRODUCERS, 0))
+        self.assertEqual(self.played((11, device.BATTERY_DISCHARGING)), before)
+        self.assertEqual(self.played(None), before)
+
+    def test_which_readings_keep_it_still(self):
+        for battery in ((1, 0), (10, 0), (10, 1), (10, 3), [10, 0], (5, device.BATTERY_SLOW_CHARGE)):
+            self.assertTrue(device.saving_battery(True, battery), battery)
+        for battery in ((11, 0), (0, 0), (100, 0), None, (10,), (10, 0, 0), ("10", 0), (10.0, 0), (True, 0), True, 10):
+            self.assertFalse(device.saving_battery(True, battery), battery)
+        for enabled in (False, 1, None, "true"):
+            self.assertFalse(device.saving_battery(enabled, (5, 0)), enabled)
+        self.assertEqual(device.HAPTIC_SAVING, 10)
+
+    def test_charging_alone_does_not_end_it_a_level_above_10_percent_does(self):
+        self.assertEqual(self.played((8, device.BATTERY_CHARGING)), dict.fromkeys(PRODUCERS, 0))
+        self.assertEqual(self.played((11, device.BATTERY_CHARGING)), self.played((11, device.BATTERY_CHARGING), False))
+
+    def test_it_ends_and_comes_back_with_what_the_mouse_reports(self):
+        made = saver((10, device.BATTERY_DISCHARGING))
+        wire, index = made.mouse.transport, made.mouse.features[device.UNIFIED_BATTERY]
+        made.play_haptic(0x0C)
+        drain(made)
+        self.assertEqual(wire.played(), [])
+        made._on_notification(wire, 1, index, 0x00, bytes([11, 2, device.BATTERY_CHARGING, 0]))
+        made.play_haptic(0x0C)
+        drain(made)
+        self.assertEqual(len(wire.played()), 1)
+        made._on_notification(wire, 1, index, 0x00, bytes([9, 2, device.BATTERY_DISCHARGING, 0]))
+        made.play_haptic(0x0C)
+        drain(made)
+        self.assertEqual(len(wire.played()), 1)
+
+    def test_switched_off_and_on_again_at_once(self):
+        made = saver((5, device.BATTERY_DISCHARGING), saving=False)
+        wire = made.mouse.transport
+        for saving, played in ((False, 1), (True, 1), (False, 2)):
+            cfg = copy.deepcopy(made.cfg)
+            cfg["haptics"]["battery_saving"] = saving
+            made._apply_config(cfg)
+            made.play_haptic(0x0C)
+            drain(made)
+            self.assertEqual(len(wire.played()), played, saving)
+
+    def test_without_a_mouse_that_can_vibrate_nothing_changes(self):
+        for saving in (True, False):
+            for mouse, online, waveforms in ((None, False, None), (motor(), False, None), (motor(), True, [])):
+                made = saver((5, 0), saving)
+                made.mouse, made.online = mouse, online
+                if waveforms is not None:
+                    mouse.haptic_waveforms = waveforms
+                made.play_haptic(0x0C)
+                drain(made)  # nothing sent, nothing raised
+                self.assertEqual(mouse.transport.played() if mouse else [], [])
+
+    def test_a_new_mouse_is_not_kept_still_by_the_battery_of_the_one_before(self):
+        made = saver((5, device.BATTERY_DISCHARGING))
+        made.mouse, made.online = None, False
+        found = motor(refuse={device.UNIFIED_BATTERY})  # it does not say how full it is
+        with mock.patch.object(hidpp, "find_hidpp_nodes", lambda: [("/dev/synthetic0", True)]), \
+                mock.patch.object(made, "_transport", lambda path, is_receiver: found.transport), \
+                mock.patch.object(device, "find_mouse", lambda *args, **kwargs: found), \
+                mock.patch.object(made.keyboard, "skip"), mock.patch.object(made.keyboard, "after_scan"):
+            made._scan()
+        self.assertIs(made.mouse, found)
+        self.assertIn((device.UNIFIED_BATTERY, 1), found.transport.sent)  # asked, and it failed
+        self.assertIsNone(made._battery)
+        made.play_haptic(0x0C)
+        drain(made)
+        self.assertEqual(len(found.transport.played()), 1)
+
+    def test_switching_it_sends_the_mouse_nothing_other_settings_as_before(self):
+        made = saver((50, device.BATTERY_DISCHARGING))
+        wire = made.mouse.transport
+        for saving in (False, True, False):
+            cfg = copy.deepcopy(made.cfg)
+            cfg["haptics"]["battery_saving"] = saving
+            made._apply_config(cfg)
+            self.assertEqual(made.cfg["haptics"]["battery_saving"], saving)
+        self.assertEqual(wire.sent, [])
+        self.assertIs(made.cfg["haptics"]["enabled"], True)
+        cfg = copy.deepcopy(made.cfg)
+        cfg["haptics"]["level"] = 30
+        made._apply_config(cfg)
+        self.assertEqual(wire.sent, [(device.HAPTIC, 2)])
+
+    def test_kept_still_means_nothing_at_all_goes_to_the_mouse(self):
+        both = {name: PRODUCERS[name] for name in ("a pattern tried on a page or asked for by another program", "the rumble test")}
+        for saving, sent in ((True, False), (False, True)):
+            for name, produce in both.items():
+                made = saver((5, device.BATTERY_DISCHARGING), saving)
+                produce(made)
+                self.assertEqual(bool(made.mouse.transport.sent), sent, (name, saving))
+
+
+class SwitchingScreens(unittest.TestCase):
+    """haptics.screens: a subtle tick through the engine's one way to the motor, decided when it is played."""
+
+    def made(self, screens=True, enabled=True):
+        made = saver((50, device.BATTERY_DISCHARGING))
+        made.cfg["haptics"].update(screens=screens, enabled=enabled)
+        return made
+
+    def test_a_tick_while_it_is_on(self):
+        for screens, enabled, ticks in ((True, True, 1), (False, True, 0), (True, False, 0), (False, False, 0)):
+            with self.subTest(screens=screens, enabled=enabled):
+                made = self.made(screens, enabled)
+                with mock.patch.object(made.mouse, "play_haptic", wraps=made.mouse.play_haptic) as played:
+                    made.screen_cue()
+                    drain(made)
+                self.assertEqual(played.call_args_list, [mock.call(device.WAVE_SUBTLE, True)] * ticks)
+                self.assertEqual(len(made.mouse.transport.played()), ticks)
+
+    def test_switched_off_before_it_is_played_nothing_plays(self):
+        for key in ("screens", "enabled"):
+            with self.subTest(key=key):
+                made = self.made()
+                made.screen_cue()
+                cfg = copy.deepcopy(made.cfg)
+                cfg["haptics"][key] = False
+                made._apply_config(cfg)
+                drain(made)
+                self.assertEqual(made.mouse.transport.played(), [])
+
+    def test_switching_it_sends_the_mouse_nothing(self):
+        made = self.made(screens=False)
+        wire = made.mouse.transport
+        for screens in (True, False, True):
+            cfg = copy.deepcopy(made.cfg)
+            cfg["haptics"]["screens"] = screens
+            made._apply_config(cfg)
+            self.assertIs(made.cfg["haptics"]["screens"], screens)
+        self.assertEqual(wire.sent, [])
+        cfg = copy.deepcopy(made.cfg)
+        cfg["haptics"]["level"] = 30
+        made._apply_config(cfg)
+        self.assertEqual(wire.sent, [(device.HAPTIC, 2)])
+
+    def test_without_a_mouse_that_can_vibrate_nothing_is_sent(self):
+        for mouse, online, waveforms in ((None, False, None), (motor(), False, None), (motor(), True, [])):
+            made = self.made()
+            made.mouse, made.online = mouse, online
+            if waveforms is not None:
+                mouse.haptic_waveforms = waveforms
+            made.screen_cue()
+            drain(made)  # nothing sent, nothing raised
+            self.assertEqual(mouse.transport.played() if mouse else [], [])
 
 
 class OtherMice(unittest.TestCase):

@@ -19,7 +19,7 @@ from PySide6.QtQml import QQmlApplicationEngine, qmlRegisterType
 from PySide6.QtQuick import QQuickItem, QQuickPaintedItem
 from PySide6.QtWidgets import QWidget
 
-from .. import actions, device, environment, x11
+from .. import actions, config, device, environment, x11
 from ..i18n import _
 from . import icons, theme
 
@@ -33,6 +33,7 @@ CENTER = 0.125          # centre bubble radius
 FOLDER_DWELL = 330      # ms pointing at a folder (button held) before it opens
 IDLE_TIMEOUT = 20000    # an untouched ring closes by itself
 WHEEL_STEP = 120        # wheel units per dial step
+DIAL_STEPS_MAX = 8      # dial steps from one turn at most (own choice); more are dropped
 # How the overlay gets above the windows (see RingOverlay)
 LAYER, X11, XWAYLAND, WINDOW = "layer", "x11", "xwayland", "window"
 # ms the pointer has to turn up in the new window before the ring opens mid-screen
@@ -44,6 +45,10 @@ FOCUS_AWAY = 350         # ms the focus may be elsewhere before a menu in an ord
 ACTION_DELAY = {LAYER: 40, X11: 40, XWAYLAND: 40, WINDOW: 160}
 HELPER_RESTARTS = 5      # times the overlay's own program is started again after dying, before it is given up
 HELPER_PLATFORM = "xcb"  # what the overlay's own program has Qt talk to: the X server
+# Spotlight effects, shown in the same window while their button is held (own choices)
+SNAPSHOT_MAX = 64 << 20  # bytes the picture of the screen Still Magnify takes may have, at most
+ZOOM = 2.0               # Still Magnify: how much larger the screen shows in the lens
+DIM_ALPHA = 160          # Highlight: how dark the rest of the screen gets (of 255)
 
 
 def is_folder(bubble):
@@ -529,6 +534,100 @@ def overlay_kind():
     return XWAYLAND if os.environ.get("DISPLAY") else WINDOW  # the X server a Wayland session keeps for X11 programs
 
 
+def effects_here(kind=None):
+    """The Spotlight effects an overlay of ``kind`` (None: this desktop's) can show. None in a window that cannot be
+    seen through (X11 without compositing) or takes the focus (WINDOW); Still Magnify needs a picture of the screen,
+    which only X11 and Windows give a program (Qt gets none on Wayland)."""
+    kind = kind or overlay_kind()
+    if kind == X11:
+        return config.EFFECTS if sys.platform == "win32" or x11.compositing() else ()
+    return ("highlight", "laser") if kind in (LAYER, XWAYLAND) else ()
+
+
+def effect_look(look):
+    """``look`` as the engine sends it ({"effect", "size", "color"}), checked, or None. Never raises: it may have come
+    over the pipe to the overlay's own program."""
+    if type(look) is not dict or set(look) != {"effect", "size", "color"}:
+        return None
+    effect, size, color = look["effect"], look["size"], look["color"]
+    if not (type(effect) is str and effect in config.EFFECTS and type(size) is int
+            and config.EFFECT_SIZE[0] <= size <= config.EFFECT_SIZE[1]
+            and type(color) is str and config.EFFECT_COLOR.match(color)):
+        return None
+    return {"effect": effect, "size": size, "color": color.lower()}
+
+
+def effect_radius(look):
+    """Radius of an effect in logical pixels, from its size (1-100)."""
+    size = look["size"]
+    return {"highlight": 40 + 3.2 * size, "laser": 3 + 0.27 * size, "magnify": 50 + 2.5 * size}[look["effect"]]
+
+
+class EffectItem(QQuickPaintedItem):
+    """A Spotlight effect around the pointer: the lit circle of Highlight (RingSurface.qml darkens the rest), the dot
+    of Digital Laser, or the lens of Still Magnify over the picture of the screen taken at the press."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAntialiasing(True)
+        self._look = None
+        self._snapshot = None
+        self._center = QPointF()
+
+    def set_look(self, look, snapshot=None):
+        """Show ``look`` once set_center places it; None hides it and lets go of the picture."""
+        self._look, self._snapshot = look, snapshot if look is not None else None
+        if look is not None:
+            self.setWidth(2 * effect_radius(look))
+            self.setHeight(2 * effect_radius(look))
+        self.setVisible(False)
+        self.update()
+
+    def set_center(self, x, y):
+        """The pointer is at (x, y) of the window: on the screen the picture is of, the point it is magnified from."""
+        if self._look is None:
+            return
+        radius = effect_radius(self._look)
+        self._center = QPointF(x, y)
+        self.setX(x - radius)
+        self.setY(y - radius)
+        self.setVisible(True)
+        self.update()
+
+    def paint(self, painter):
+        look = self._look
+        if look is None:
+            return
+        radius = effect_radius(look)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        middle = QPointF(radius, radius)
+        circle = _circle(middle, radius)
+        color = QColor(look["color"])
+        if look["effect"] == "highlight":
+            color.setAlpha(DIM_ALPHA)
+            square = QPainterPath()
+            square.addRect(QRectF(0, 0, 2 * radius, 2 * radius))
+            painter.fillPath(square.subtracted(circle), color)
+        elif look["effect"] == "laser":
+            painter.setPen(Qt.PenStyle.NoPen)
+            glow = QColor(color)
+            glow.setAlpha(90)
+            painter.setBrush(glow)
+            painter.drawEllipse(middle, radius, radius)
+            painter.setBrush(color)
+            painter.drawEllipse(middle, radius * 0.6, radius * 0.6)
+        elif self._snapshot is not None:
+            ratio, seen = self._snapshot.devicePixelRatio(), radius / ZOOM
+            source = QRectF((self._center.x() - seen) * ratio, (self._center.y() - seen) * ratio, 2 * seen * ratio, 2 * seen * ratio)
+            painter.save()
+            painter.setClipPath(circle)
+            painter.drawPixmap(QRectF(0, 0, 2 * radius, 2 * radius), self._snapshot, source)
+            painter.restore()
+            painter.setPen(QPen(color, 3))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(middle, radius - 1.5, radius - 1.5)
+
+
 class RingOverlay(QObject):
     """Shows the menu under the cursor; the cursor stays free and picks a bubble by pointing at it.
 
@@ -551,7 +650,7 @@ class RingOverlay(QObject):
       WINDOW  Wayland with neither: an ordinary maximised window. It takes the focus while it is open,
               and the desktop may animate it."""
 
-    triggered = Signal(object)  # action to run
+    triggered = Signal(object, object)  # action to run, number of the ring it was picked in (None: not the engine's)
     cue = Signal(int)           # haptic waveform to play
     opened = Signal(bool)       # the menu appeared / went away
 
@@ -561,6 +660,7 @@ class RingOverlay(QObject):
         self.kind = kind or overlay_kind()
         self._root = []
         self._shown = []        # the bubbles on screen at the top level: the user's ring, or a visitor's
+        self._session = None    # the engine's number of the ring on screen; None: another program opened it
         self._path = []         # folders entered, outermost first
         self._size = RING_BASE
         self._style = "bubbles"
@@ -577,11 +677,11 @@ class RingOverlay(QObject):
         self._was_active = False  # WINDOW: the window has had the focus since it opened
         self._small = False       # X11 without compositing: the window is no larger than the menu
         self._away_timer = QTimer(self, singleShot=True, interval=AWAY_TIMEOUT)
-        self._away_timer.timeout.connect(self.close)
+        self._away_timer.timeout.connect(self._close_ring)
         self._place_timer = QTimer(self, singleShot=True, interval=PLACE_WAIT[LAYER])
         self._place_timer.timeout.connect(self._place_fallback)
         self._idle_timer = QTimer(self, singleShot=True, interval=IDLE_TIMEOUT)
-        self._idle_timer.timeout.connect(self.close)
+        self._idle_timer.timeout.connect(self._close_ring)
         self._dwell_timer = QTimer(self, singleShot=True, interval=FOLDER_DWELL)
         self._dwell_timer.timeout.connect(self._dwelled)
         self._grow = QVariantAnimation(self)
@@ -590,12 +690,18 @@ class RingOverlay(QObject):
         self._grow.setDuration(190)
         self._grow.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._grow.valueChanged.connect(lambda value: self._ring.set_progress(float(value)))
+        self._effect_held = False  # a Spotlight press holds the overlay, shown or not, until "up", "cancel" or close()
+        self._effect_look = None   # the effect on screen, or None
+        self._snapshot = None      # Still Magnify: the screen at the press, in memory only
+        self._effect_item = None
+        self._dim = None           # what darkens the screen around Highlight
         self._load()
 
     def _load(self):
         global _registered
         if not _registered:
             qmlRegisterType(RingItem, "MXOptions", 1, 0, "RingItem")
+            qmlRegisterType(EffectItem, "MXOptions", 1, 0, "EffectItem")
             _registered = True
         roots = []
         for kind in ((LAYER, WINDOW) if self.kind == LAYER else (self.kind,)):
@@ -622,6 +728,9 @@ class RingOverlay(QObject):
             self._window.activeChanged.connect(self._focus_changed)
         self._ring = self._window.findChild(QQuickItem, "ring")
         self.available = isinstance(self._ring, RingItem)
+        effect = self._window.findChild(QQuickItem, "effect")
+        self._effect_item = effect if isinstance(effect, EffectItem) else None
+        self._dim = self._window.findChild(QQuickItem, "effects")
         log.info("ring: overlay of the %s kind", self.kind)
 
     def set_look(self, theme_name, accent, language):
@@ -634,7 +743,7 @@ class RingOverlay(QObject):
         self._size = RING_BASE * ring.get("size", 1.0)
         self._style = ring.get("style", "bubbles")
         if self._open:
-            self.close()
+            self._close_ring()
         if self._ring:
             self._ring.setWidth(self._size)
             self._ring.setHeight(self._size)
@@ -661,15 +770,19 @@ class RingOverlay(QObject):
 
     # -- driven by the mouse button (engine events) -----------------------
 
-    def handle(self, event):
+    def handle(self, event, session=None, bubbles=None):
+        """From the engine: "down" opens ``bubbles`` (checked; None: the user's ring) as ring number ``session``.
+        "cancel" with a number closes only an engine ring up to that number, never one another program opened."""
         if not self.available:
             return
         if event == "down":
             if self._open:  # a second press closes a menu left open by a tap
                 self._swallow_up = True
-                self.close()
-            elif self._root:
-                self._show(self._root)
+                self._close_ring()
+            else:
+                root = self._root if bubbles is None else bubbles
+                if root and not self._effect_held:  # none over a Spotlight press, nor one left for after it
+                    self._show(root, session)
         elif event == "up":
             self._held = False
             if self._swallow_up:
@@ -678,20 +791,22 @@ class RingOverlay(QObject):
                 self._released()
         elif event == "cancel":
             self._swallow_up = False
-            self.close()
+            if session is None or (self._session is not None and self._session <= session):
+                self._close_ring()
 
     def open(self, bubbles=None):
         """Open the menu at the pointer with no button held, as another program asked; it waits for a
         click. ``bubbles`` (already checked) are shown once in place of the user's ring."""
         root = self._root if bubbles is None else bubbles
-        if not self.available or self._open or not root:
+        if not self.available or self._open or self._effect_held or not root:
             return False
-        self._show(root)
+        self._show(root, None)
         self._held = False
         return True
 
-    def _show(self, root):
+    def _show(self, root, session):
         self._open = True
+        self._session = session
         self._held = True
         self._shown = root
         self._path = []
@@ -770,10 +885,18 @@ class RingOverlay(QObject):
             self._away_timer.start(FOCUS_AWAY)
 
     def close(self):
+        """Everything off the screen, as another program, quitting or the main program asks: the ring and a Spotlight
+        effect alike. The ring's own ways of going (a pick, a click elsewhere, its timers, the engine) close the ring
+        only."""
+        self._effect_off()
+        self._close_ring()
+
+    def _close_ring(self):
         for timer in (self._place_timer, self._idle_timer, self._dwell_timer, self._away_timer):
             timer.stop()
         self._grow.stop()
         self._held = False
+        self._session = None
         if self._open:
             self._open = False
             self._ring.setProperty("shown", False)
@@ -827,10 +950,86 @@ class RingOverlay(QObject):
         action = actions.SCROLLS[bubble["scroll"]][4] if is_dial(bubble) else bubble.get("action")
         if not action:
             return  # a dial without a click action
-        self.close()
+        session = self._session  # before _close_ring() forgets which ring it was
+        self._close_ring()
         self.cue.emit(device.WAVE_CONFIRM)
         # Let the overlay unmap first so the action lands in the application below.
-        QTimer.singleShot(ACTION_DELAY[self.kind], lambda: self.triggered.emit(action))
+        QTimer.singleShot(ACTION_DELAY[self.kind], lambda: self.triggered.emit(action, session))
+
+    # -- Spotlight (engine events) -------------------------------------------
+
+    def effect(self, event, look=None):
+        """From the engine: "down" shows ``look`` ({"effect", "size", "color"}) at the pointer until "up" or "cancel".
+        The press holds the overlay from "down" on, whether its effect shows or not: no ring opens meanwhile. An effect
+        that cannot show (a ring is open, this desktop lacks it, no picture of the screen) never shows later."""
+        if event == "down":
+            if not self.available or self._effect_held:
+                return
+            self._effect_held = True
+            look = effect_look(look)
+            here = effects_here(self.kind) if self._effect_item is not None else ()
+            if look is None or self._open or look["effect"] not in here:
+                return
+            where = QCursor.pos() if self.kind == X11 else None
+            snapshot = self._grab(where) if look["effect"] == "magnify" else None
+            if look["effect"] == "magnify" and snapshot is None:
+                return
+            self._show_effect(look, snapshot, where)
+        elif event in ("up", "cancel"):
+            self._effect_off()
+
+    def _show_effect(self, look, snapshot, where):
+        self._effect_look, self._snapshot = look, snapshot
+        self._effect_item.set_look(look, snapshot)
+        if self._dim is not None:
+            dim = QColor(look["color"])
+            dim.setAlpha(DIM_ALPHA)
+            self._dim.setProperty("dim", dim)
+            self._dim.setProperty("dims", look["effect"] == "highlight")
+        window = self._window
+        if self.kind == X11:  # the screen under the pointer; where the pointer is shows at once
+            area = (QGuiApplication.screenAt(where) or QGuiApplication.primaryScreen()).geometry()
+            window.setColor(QColor(0, 0, 0, 0))
+            window.setGeometry(area)
+        elif self.kind == XWAYLAND:  # every screen: the pointer shows once it moves over the window
+            window.setColor(QColor(0, 0, 0, 0))
+            window.setGeometry(self._all_screens())
+        window.setVisible(True)
+        if self.kind != LAYER:
+            window.raise_()
+        if self.kind == X11:
+            self._effect_item.set_center(where.x() - area.x(), where.y() - area.y())
+
+    def _effect_off(self):
+        """The Spotlight press ends: its effect, if one shows, goes with its picture. An open ring stays."""
+        shown = self._effect_look is not None
+        self._effect_held, self._effect_look, self._snapshot = False, None, None
+        if self._effect_item is not None:
+            self._effect_item.set_look(None)
+        if self._dim is not None:
+            self._dim.setProperty("dims", False)
+        if shown and not self._open:
+            self._window.setVisible(False)
+
+    @staticmethod
+    def _grab(where):
+        """A picture of the screen under ``where`` for Still Magnify, or None. Taken only when it fits in SNAPSHOT_MAX
+        bytes, checked again on what came back; it stays in memory, never written anywhere."""
+        screen = QGuiApplication.screenAt(where)
+        if screen is None:
+            return None
+        size, ratio = screen.geometry().size(), screen.devicePixelRatio()
+        width, height = size.width(), size.height()
+        if not all(type(value) in (int, float) and math.isfinite(value) and value > 0 for value in (width, height, ratio)):
+            return None
+        wide, high = width * ratio, height * ratio
+        if not (math.isfinite(wide) and math.isfinite(high)) or math.ceil(wide) * math.ceil(high) * 4 > SNAPSHOT_MAX:
+            return None
+        pixmap = screen.grabWindow(0)
+        if pixmap.isNull() or pixmap.width() * pixmap.height() * max(4, pixmap.depth() // 8) > SNAPSHOT_MAX:
+            return None
+        pixmap.setDevicePixelRatio(pixmap.width() / width)  # what it came back as: one logical pixel is this many
+        return pixmap
 
     # -- driven by the pointer (QML) ---------------------------------------
 
@@ -861,6 +1060,9 @@ class RingOverlay(QObject):
 
     @Slot(float, float)
     def pointerAt(self, x, y):
+        if self._effect_look is not None:
+            self._effect_item.set_center(x, y)
+            return
         if not self._open:
             return
         if not self._placed:
@@ -881,7 +1083,9 @@ class RingOverlay(QObject):
     @Slot()
     def pointerLeft(self):
         """The pointer went off the window: onto another screen, or past the small window of X11 without compositing."""
-        if self._open and self._placed:
+        if self._effect_look is not None:
+            self._effect_item.setVisible(False)
+        elif self._open and self._placed:
             self._armed = True
             self._select(-1)
             if self._small and not self._held:
@@ -901,7 +1105,7 @@ class RingOverlay(QObject):
         elif in_hub(QPointF(x, y), self._ring_rect(), len(level), self._style) and self._path:
             self._leave()
         else:
-            self.close()
+            self._close_ring()
 
     @Slot(float, float, float)
     def wheelAt(self, x, y, delta):
@@ -927,13 +1131,14 @@ class RingOverlay(QObject):
         self._idle_timer.start()
         self._wheel += delta
         _label, _icon, up, down, _click = actions.SCROLLS[self._level()[index]["scroll"]]
-        while abs(self._wheel) >= WHEEL_STEP:
-            forward = self._wheel > 0
-            self._wheel -= WHEEL_STEP if forward else -WHEEL_STEP
+        whole = int(self._wheel / WHEEL_STEP)
+        self._wheel -= whole * WHEEL_STEP  # before sending: nothing owed, steps beyond DIAL_STEPS_MAX dropped
+        forward = whole > 0
+        for _ in range(min(abs(whole), DIAL_STEPS_MAX)):
             self._angle = (self._angle + (30.0 if forward else -30.0)) % 360.0
             self._ring.set_spin(index, self._angle)
             self.cue.emit(device.WAVE_TICK)
-            self.triggered.emit(up if forward else down)
+            self.triggered.emit(up if forward else down, self._session)
 
 
 class RingProxy(QObject):
@@ -945,7 +1150,7 @@ class RingProxy(QObject):
     from here and told over its standard input what the overlay would be told: one line of JSON each
     way per call or signal."""
 
-    triggered = Signal(object)
+    triggered = Signal(object, object)
     cue = Signal(int)
     opened = Signal(bool)
 
@@ -957,6 +1162,7 @@ class RingProxy(QObject):
         self._look = None    # (theme, accent, language)
         self._config = None  # the "ring" section of the settings
         self._open = False
+        self._effect = False  # a Spotlight press sent there and not ended since: no ring is asked for meanwhile
         self._buffer = b""
         self._starts = 0
         self._closing = False
@@ -980,7 +1186,7 @@ class RingProxy(QObject):
         self._process.start()
 
     def _ended(self):
-        was_open, self._open, self.available = self._open, False, False
+        was_open, self._open, self.available, self._effect = self._open, False, False, False
         if was_open:
             self.opened.emit(False)
         if self._closing:
@@ -1011,8 +1217,9 @@ class RingProxy(QObject):
                     self._send("look", look=self._look)
                 if self._config is not None:
                     self._send("configure", ring=self._config)
-            elif event == "triggered" and isinstance(message.get("action"), dict):
-                self.triggered.emit(message["action"])
+            elif (event == "triggered" and isinstance(message.get("action"), dict) and "session" in message
+                  and valid_session(message["session"])):
+                self.triggered.emit(message["action"], message["session"])
             elif event == "cue" and isinstance(message.get("wave"), int):
                 self.cue.emit(message["wave"])
             elif event == "opened":
@@ -1030,20 +1237,34 @@ class RingProxy(QObject):
     def refresh(self):
         pass  # the look is passed on by set_look, and the other program repaints for itself
 
-    def handle(self, event):
-        self._send("handle", event=event)
+    def handle(self, event, session=None, bubbles=None):
+        self._send("handle", event=event, session=session, bubbles=bubbles)
 
     def turn(self, clicks):
         self._send("turn", clicks=clicks)
 
+    def effect(self, event, look=None):
+        """Held from "down" until "up", "cancel", close() or the other program ending, as RingOverlay.effect holds."""
+        if event == "down":
+            if not self.available or self._effect:
+                return
+            self._effect = True
+        elif event in ("up", "cancel"):
+            self._effect = False
+        else:
+            return
+        self._send("effect", event=event, look=look)
+
     def open(self, bubbles=None):
+        """True: asked for, which is not yet shown (the other program says so with "opened")."""
         root = (self._config or {}).get("bubbles") if bubbles is None else bubbles
-        if not self.available or self._open or not root:
+        if not self.available or self._open or self._effect or not root:
             return False
         self._send("open", bubbles=bubbles)
         return True
 
     def close(self):
+        self._effect = False
         self._send("close")
 
     def shutdown(self):
@@ -1052,6 +1273,11 @@ class RingProxy(QObject):
         self._process.closeWriteChannel()  # it leaves when nothing more can be said to it
         if not self._process.waitForFinished(1500):
             self._process.kill()
+
+
+def valid_session(session):
+    """A ring number as it may cross to or from the overlay's own program: an int, or None."""
+    return session is None or type(session) is int
 
 
 def create_overlay(parent=None):
