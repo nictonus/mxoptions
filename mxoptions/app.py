@@ -357,7 +357,7 @@ def main(argv=None):
     )
 
     low = {"armed": True, "mouse": True}
-    shown = {"notice": 0}  # the number of the last notice of a change the keyboard reported that was said
+    shown["notice"] = 0  # the number of the last notice of a change the keyboard reported that was said
 
     def tray_state(state):
         tray.setToolTip(_tray_tooltip(state))
