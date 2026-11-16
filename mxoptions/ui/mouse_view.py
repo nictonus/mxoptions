@@ -104,6 +104,8 @@ class MouseView(QWidget):
             chip.hovered.connect(lambda inside, k=key: self._set_hover(k if inside else None))
             self._group.addButton(chip)
             self._chips[key] = chip
+        if not self._chips:  # no titles: the picture alone (the home page), all of the width its own
+            self.setMinimumSize(200, 200)
 
     def keys(self):
         return list(self._chips)
@@ -207,16 +209,20 @@ class MouseView(QWidget):
 
     def _stage(self):
         """Everything right of the callouts: the model and its glow stay inside."""
-        left = chip_width() + 10
+        left = chip_width() + 10 if self._chips else 0
         return QRectF(left, 0, self.width() - left, self.height())
 
+    def _left(self):
+        """Where the model's room starts: right of the callout column, or at the edge with no callouts."""
+        return chip_width() + MODEL_GAP if self._chips else 0
+
     def _photo_rect(self):
-        left = chip_width() + MODEL_GAP
+        left = self._left()
         area = QRectF(left, 0, self.width() - left, self.height())
         return mouse_photo.fit(area.adjusted(area.width() * 0.07, area.height() * 0.045, -area.width() * 0.07, -area.height() * 0.045))
 
     def _generic_rect(self):
-        left = chip_width() + MODEL_GAP
+        left = self._left()
         area = QRectF(left, 0, self.width() - left, self.height())
         return mouse_generic.fit(area.adjusted(area.width() * 0.1, area.height() * 0.06, -area.width() * 0.1, -area.height() * 0.06))
 
@@ -242,10 +248,11 @@ class MouseView(QWidget):
             self.select(key)
 
     def _camera(self, view):
-        left = chip_width() + MODEL_GAP
+        left = self._left()
         width = self.width() - left - 8
         # 150 x 150 mm comfortably contains the model from every camera angle used
-        scale = max(1.5, min(4.2, width / 150.0, (self.height() - 16) / 150.0))
+        # never below 1.5 beside the callouts; the picture alone (home page) shrinks with its room, all of it in view
+        scale = max(1.5 if self._chips else 0.5, min(4.2, width / 150.0, (self.height() - 16) / 150.0))
         origin = QPointF(left + width / 2, self.height() / 2 + 4 * scale)
         return mouse_model.Camera(view[0], view[1], scale, origin)
 

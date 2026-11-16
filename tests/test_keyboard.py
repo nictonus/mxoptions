@@ -1276,7 +1276,7 @@ class State(unittest.TestCase):
         made.listener.on_state = seen.append
         made._publish()
         self.assertEqual(set(seen[0]), {"connected", "known", "name", "uinput", "rivals", "battery", "current_host",
-                                        "hosts", "dpi", "wheel_mode", "caps", "keyboard"})
+                                        "hosts", "receiver", "dpi", "wheel_mode", "caps", "keyboard"})
         self.assertIsNone(seen[0]["keyboard"])
 
     def test_the_keyboard_and_its_receiver_go_their_own_ways(self):

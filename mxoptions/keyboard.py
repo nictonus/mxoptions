@@ -689,6 +689,7 @@ class KeyboardSide:
         connected = dev is not None and self.online
         return {"connected": connected, "known": True, "name": self._seen[0], "battery": self._battery if connected else None,
                 "current_host": self._hosts[0], "hosts": copy.deepcopy(self._hosts[1]) if connected else [],
+                "receiver": self.transport.is_receiver if connected else None,  # False: Bluetooth (or a cable)
                 "keys": copy.deepcopy(self._seen[1]), "reason": self._block if dev is not None else None,
                 "failed": self._failed if connected else None, "firmware": self._firmware if connected else None,
                 "settings": list(self._seen[2]), "controls": self._shown_controls(),

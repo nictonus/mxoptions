@@ -517,6 +517,7 @@ class Window(unittest.TestCase):
         self.addCleanup(self.close)
         self.window.resize(1200, 780)
         self.window.show()
+        self.window._open(0)  # Buttons: the window starts on the home page
         self.page = self.window.buttons_page
         self.picker = self.page.picker
 

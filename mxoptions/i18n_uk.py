@@ -144,6 +144,12 @@ STRINGS = {
     "Each device goes to its own channel: pick the same computer for both.":
         "Кожен пристрій переходить на свій канал: виберіть той самий комп'ютер для обох.",
     "(this computer)": "(цей комп'ютер)",
+    "Good morning": "Доброго ранку",
+    "Good afternoon": "Доброго дня",
+    "Good evening": "Доброго вечора",
+    "Devices": "Пристрої",
+    "Bluetooth": "Bluetooth",
+    "Receiver": "Приймач",
     "Mouse channel": "Канал миші",
     "Keyboard channel": "Канал клавіатури",
     "Mouse and keyboard together: on/off": "Миша й клавіатура разом: увімк./вимк.",

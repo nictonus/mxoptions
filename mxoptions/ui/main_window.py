@@ -11,6 +11,7 @@ from ..i18n import _
 from . import icons
 from .flow_page import FlowPage
 from .gestures_page import GesturesPage
+from .home_page import HomePage
 from .keyboard_page import CHARGING, KeyboardPage, KeysPage, battery_text
 from .pages import ButtonsPage, DevicePage, HapticsPage, PointScrollPage
 from .ring_page import RingPage
@@ -36,11 +37,18 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
+        self.stack = QStackedWidget()
+        self._nav = QButtonGroup(self)
+        self._nav.setExclusive(True)
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
         side = QVBoxLayout(sidebar)
         side.setContentsMargins(16, 24, 16, 16)
         side.setSpacing(4)
+        # Devices: the home page Options+ starts on. Its page goes into the stack last, so that every other keeps its index
+        home_button = self._nav_button(_("Devices"), -1, "go-home")
+        side.addWidget(home_button)
+        side.addSpacing(14)
         side.addWidget(self._kind(_("Mouse")))
         self.device_name = QLabel(_("No mouse"))
         self.device_name.setObjectName("deviceName")
@@ -56,9 +64,6 @@ class MainWindow(QMainWindow):
         side.addLayout(status_line)
         side.addSpacing(14)
 
-        self.stack = QStackedWidget()
-        self._nav = QButtonGroup(self)
-        self._nav.setExclusive(True)
         self.buttons_page = ButtonsPage(store)
         gestures_page = GesturesPage(store)
         gestures_page.edit_actions.connect(self._edit_button)
@@ -109,6 +114,12 @@ class MainWindow(QMainWindow):
             block.addWidget(self._nav_button(title, self.stack.count(), icon))
             self.stack.addWidget(page)
         self._keyboard_pages = range(len(pages), self.stack.count())
+        self.home_page = HomePage(store)
+        self._home = self.stack.count()
+        self.stack.addWidget(self.home_page)
+        self._nav.setId(home_button, self._home)
+        self.home_page.open_mouse.connect(lambda: self._open(0))  # Buttons
+        self.home_page.open_keyboard.connect(lambda: self._open(self._keyboard_pages[0]))  # Keys
         self.keyboard_block.hide()
         side.addWidget(self.keyboard_block)
         side.addStretch(1)
@@ -119,7 +130,7 @@ class MainWindow(QMainWindow):
         for index in foot:
             side.addWidget(self._nav_button(pages[index][0], index, pages[index][2]))
         widest = max(self._nav.button(index).fontMetrics().horizontalAdvance(title)
-                     for index, (title, _page, _icon) in enumerate(pages))
+                     for index, (title, _page, _icon) in [*enumerate(pages), (self._home, (_("Devices"), None, None))])
         with_icons = any(not button.icon().isNull() for button in self._nav.buttons())
         if with_icons:  # a page the icon theme has no icon for keeps the room of one, so that the names line up
             blank = QPixmap(NAV_ICON, NAV_ICON)
@@ -153,6 +164,7 @@ class MainWindow(QMainWindow):
         store.state_changed.connect(self._state)
         store.changed.connect(self._show_keyboard)
         self._state(store.state)
+        self._open(self._home)  # where the window starts
 
     @staticmethod
     def _kind(text):
@@ -170,7 +182,7 @@ class MainWindow(QMainWindow):
         if icons.has(icon):
             button.setIcon(icons.icon(icon))
             button.setIconSize(QSize(NAV_ICON, NAV_ICON))
-        button.clicked.connect(lambda _checked=False, i=index: self.stack.setCurrentIndex(i))
+        button.clicked.connect(lambda: self.stack.setCurrentIndex(self._nav.id(button)))  # its id may come later: Home
         self._nav.addButton(button, index)
         return button
 
@@ -179,8 +191,7 @@ class MainWindow(QMainWindow):
         shown = found is not None or bool(self.store.cfg["keyboard"]["keys"])
         self.keyboard_block.setVisible(shown)
         if not shown and self.stack.currentIndex() in self._keyboard_pages:
-            self._nav.button(0).setChecked(True)
-            self.stack.setCurrentIndex(0)
+            self._open(self._home)
         if not shown:
             return
         connected = bool(found and found["connected"])

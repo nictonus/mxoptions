@@ -64,10 +64,16 @@ CONTRACT = {  # group: (file, line copied from a build that has the capability, 
                           '"script", "macro", "host", "hook", "ring")', {"keyboard-ring-key"}, set()),
     "fn-lock-notices": ("mxoptions/config.py", '    cfg["keyboard"]["fn_notices"] = cfg["keyboard"].get("fn_notices") is True',
                         {"fn-lock-notices"}, set()),
+    "together-actions": ("mxoptions/ui/editors.py", "class EasySwitchDialog(QDialog):", {"together-actions"}, set()),
+    "home-screen": ("mxoptions/ui/home_page.py", "class HomePage(QWidget):", {"home-screen"}, set()),
 }
 # Per capability of the Linux feature stack: the files whose code decides or carries out what its checks see. A change
 # to any one must move the digest and so void that capability's results: "paths" names each, "ungated" none.
 BEHAVIOUR = {
+    "home-screen": ("mxoptions/ui/home_page.py", "mxoptions/ui/main_window.py", "mxoptions/engine.py", "mxoptions/keyboard.py"),
+    "together-actions": ("mxoptions/actions.py", "mxoptions/config.py", "mxoptions/engine.py", "mxoptions/keyboard.py",
+                         "mxoptions/api.py", "mxoptions/app.py", "mxoptions/flow_service.py", "mxoptions/ui/editors.py",
+                         "mxoptions/ui/action_picker.py"),
     "mouse-battery-saving": ("mxoptions/config.py", "mxoptions/device.py", "mxoptions/engine.py", "mxoptions/api.py",
                              "mxoptions/app.py", "mxoptions/keyboard.py", "mxoptions/ui/pages.py"),
     "screen-switch-haptics": ("mxoptions/config.py", "mxoptions/engine.py", "mxoptions/flow_edges.py", "mxoptions/x11.py",

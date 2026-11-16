@@ -33,6 +33,7 @@ STATE = {
     "connected": True, "known": True, "name": "MX Master 4", "uinput": True, "battery": (82, 0), "current_host": 0,
     "wheel_mode": "ratchet", "dpi": 1000,
     "hosts": [{"paired": True, "name": "workstation"}, {"paired": True, "name": "laptop"}, {"paired": False, "name": ""}],
+    "receiver": False,  # on Bluetooth
     "caps": {
         "buttons": list(config.BUTTONS), "dpi": (200, 8000, 50), "dpi_default": 1000, "smartshift": True, "torque": True,
         "wheel": True, "ratchet_events": True, "thumbwheel": True,
@@ -51,6 +52,7 @@ KEPT = (0x00D1, 0x00D2, 0x00D3, 0x0034)
 KEYBOARD = {
     "connected": True, "known": True, "name": "MX Mechanical", "battery": (64, 0), "current_host": 0,
     "hosts": [{"paired": True, "name": "workstation"}, {"paired": True, "name": "laptop"}, {"paired": False, "name": ""}],
+    "receiver": False,  # on Bluetooth
     "keys": [{"id": f"0x{cid:04x}", "cid": cid, "tid": cid, "protected": cid in KEPT,
               "active": cid in (0x011C, 0x00E5), "native_reason": "protected" if cid in KEPT else None,
               "pos": KEYBOARD_POS.get(cid, 0)}
@@ -128,13 +130,14 @@ def main():
 
     def settle():
         """Let layouts, animations and the worker-thread model render finish."""
-        view = window.buttons_page.view
+        views = (window.buttons_page.view, window.home_page.mouse_view)
         deadline = time.time() + 8.0
         while time.time() < deadline:
             for _ in range(6):
                 app.processEvents()
-            busy = view._studio() and (view._rendering or view._wanted or view._settle.isActive())
-            if not busy and view._progress >= 1.0:
+            busy = any(view.isVisible() and view._studio() and (view._rendering or view._wanted or view._settle.isActive())
+                       for view in views)
+            if not busy and all(view._progress >= 1.0 for view in views):
                 break
             time.sleep(0.01)
         for _ in range(6):
@@ -150,7 +153,7 @@ def main():
 
     os.makedirs(args.out, exist_ok=True)
     # each picture by the stack index of its page (the sidebar shows them in another order)
-    shots = list(enumerate(PAGES))
+    shots = [(window._home, "home")] + list(enumerate(PAGES))
     if args.keyboard:
         shots += zip(window._keyboard_pages, KEYBOARD_PAGES)
     for index, name in shots:

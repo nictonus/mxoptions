@@ -41,8 +41,8 @@ class Store(QObject):
         self.front = None     # front.Front, once the program has made it: which app is in front
         self.mouse_app = None  # the app whose mouse settings the pages show; None: all apps. Never saved.
         self.state = {"connected": False, "known": False, "name": "", "uinput": True, "rivals": [], "battery": None,
-                      "current_host": 0, "hosts": [], "dpi": cfg["pointer"]["dpi"], "wheel_mode": "", "caps": None,
-                      "keyboard": None}
+                      "current_host": 0, "hosts": [], "receiver": None, "dpi": cfg["pointer"]["dpi"], "wheel_mode": "",
+                      "caps": None, "keyboard": None}
         self._save_timer = QTimer(self, singleShot=True, interval=500)
         self._save_timer.timeout.connect(self.flush)
 

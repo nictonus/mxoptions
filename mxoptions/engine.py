@@ -890,6 +890,7 @@ class Engine:
             "battery": self._battery if mouse else None,
             "current_host": self._hosts[0],
             "hosts": copy.deepcopy(self._hosts[1]) if mouse else [],
+            "receiver": getattr(getattr(mouse, "transport", None), "is_receiver", None),  # False: Bluetooth (or a cable)
             "dpi": self._current_dpi(),
             "wheel_mode": self._wheel_mode if mouse and self.online else "",
             "caps": None,

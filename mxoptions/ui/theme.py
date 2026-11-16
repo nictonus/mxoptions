@@ -149,6 +149,17 @@ QToolTip {{ background: {CARD}; color: {TEXT}; border: 1px solid {BORDER}; paddi
 #deviceStatus {{ color: {MUTED}; font-size: 9.5pt; }}
 #deviceKind {{ color: {MUTED}; font-size: 8pt; font-weight: 600; letter-spacing: 1px; }}
 #heroName {{ font-size: 15pt; font-weight: 600; }}
+#homeTitle {{ font-size: 24pt; font-weight: 700; }}
+QPushButton#homeDevice {{ background: transparent; border: 2px solid transparent; border-radius: 16px; }}
+QPushButton#homeDevice:hover {{ background: {CARD}; }}
+QPushButton#homeDevice:focus {{ border-color: {ACCENT}; }}
+#homeBadge {{ background: {CARD}; border: 1px solid {BORDER}; border-radius: 6px; }}
+#homePercent {{ font-weight: 700; color: {ACCENT_INK}; }}
+#homePercent[level="charging"] {{ color: {WARN}; }}
+#homePercent[level="low"] {{ color: {DANGER}; }}
+#homePercent[level="off"] {{ color: {MUTED}; font-weight: 600; }}
+#homeBolt {{ color: {WARN}; font-weight: 700; }}
+#homeLink {{ color: {MUTED}; font-size: 9pt; }}
 #channelNumber {{ background: transparent; border: 2px solid {MUTED}; border-radius: 6px; color: {TEXT}; font-weight: 700; }}
 #channelNumberCurrent {{ background: {ACCENT}; border-radius: 6px; color: {ACCENT_TEXT}; font-weight: 700; }}
 #channelName {{ font-weight: 600; }}

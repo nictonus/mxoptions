@@ -2531,6 +2531,7 @@ class SuggestedSettings(unittest.TestCase):
                     window = MainWindow(store, hide_on_close=False)
                     try:
                         window.show()
+                        window._open(0)  # Buttons: the window starts on the home page
                         for width in (1180, 1200, 1280):
                             with self.subTest(language=language, width=width, spacing=spacing):
                                 window.resize(width, 780)
