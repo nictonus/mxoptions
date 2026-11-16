@@ -172,6 +172,8 @@ def main():
             scroll(page, 0.62)
             save("wheel-click")
         elif name == "ring":
+            page.set_customizing(True)
+            save("ring-customize")
             folder = next((i for i, bubble in enumerate(store.cfg["ring"]["bubbles"]) if "children" in bubble), None)
             if folder is not None:
                 page._open(folder)
@@ -183,6 +185,9 @@ def main():
                 page._select(action)
                 page._kind_changed("scroll")
                 save("ring-dial")
+            page.settings_tab.click()
+            save("ring-settings")
+            page.layout_tab.click()
         elif name == "device":
             scroll(page, 1.0)
             save("device-integrations")

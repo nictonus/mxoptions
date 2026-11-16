@@ -5,8 +5,8 @@ import copy
 from PySide6.QtCore import QPoint, QSize, Qt, Signal
 from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import (
-    QButtonGroup, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu,
-    QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget,
+    QButtonGroup, QFileDialog, QFrame, QGraphicsBlurEffect, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+    QMenu, QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from .. import APP_NAME, actions, config
@@ -240,13 +240,14 @@ class BubbleEditor(QFrame):
         if self._bubble is not None:
             self.icon_picker.popup_at(self.icon, self._bubble.get("icon", ""))
 
-    def show_bubble(self, bubble, index, count, may_be_folder):
+    def show_bubble(self, bubble, index, count, may_be_folder, fresh=True):
+        """``fresh``: another bubble than the one shown before; else the name being typed stays as it is."""
         self._bubble = bubble
         folder = ring.is_folder(bubble)
         self.title.setText(_("Bubble {}").format(index + 1))
         automatic = ring.bubble_label({**bubble, "label": ""})
         self.name.setPlaceholderText(automatic)
-        if not self.name.hasFocus() and self.name.text() != bubble.get("label", ""):
+        if (fresh or not self.name.hasFocus()) and self.name.text() != bubble.get("label", ""):
             self.name.setText(bubble.get("label", ""))
         self.icon.set_icon_spec(ring.bubble_icon(bubble), ring.bubble_label(bubble))
         self.colors.set_value(bubble.get("color", ""))
@@ -271,13 +272,17 @@ class RingPage(QWidget):
         self.store = store
         self._path = []   # indices of the folders opened in the preview
         self._index = 0
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        self._customizing = False  # the ring sharp and its editor out (Options+'s "Customize ring")
+        self._shown = None  # (app, folder path, index) of the bubble the editor shows
+        self._entry_press = False  # the last press on the ring was the one that started editing (see _opened)
+        page = QVBoxLayout(self)
+        page.setContentsMargins(0, 0, 0, 0)
+        page.setSpacing(0)
 
-        left = QVBoxLayout()
-        left.setContentsMargins(34, 28, 24, 20)
-        left.setSpacing(8)
+        # Across the whole page: the title with Presets, whose ring it is, and making it the app's own
+        top = QVBoxLayout()
+        top.setContentsMargins(34, 28, 24, 4)
+        top.setSpacing(8)
         heading = QHBoxLayout()
         title = QLabel(_("Actions Ring"))
         title.setObjectName("pageTitle")
@@ -286,26 +291,50 @@ class RingPage(QWidget):
                 "Press the button and the ring opens around the cursor. Click a bubble, or keep the button held, "
                 "point at a bubble and let go. Over a dial, turn the wheel or the thumb wheel."
             ))), 1)
-        self.style = Segmented([("bubbles", _("Bubbles")), ("pie", _("Pie")), ("grid", _("Tiles"))])
-        self.style.selected.connect(lambda value: self.store.set("ring", "style", value))
-        heading.addWidget(self.style, 0, Qt.AlignmentFlag.AlignBottom)
         self.presets = presets = QPushButton(_("Presets"))  # Qt adds the drop-down arrow itself
         presets.setCursor(Qt.CursorShape.PointingHandCursor)
         self.presets_menu = QMenu(presets)
         self.presets_menu.aboutToShow.connect(self._fill_presets_menu)
         presets.setMenu(self.presets_menu)
         heading.addWidget(presets, 0, Qt.AlignmentFlag.AlignBottom)
-        left.addLayout(heading)
+        top.addLayout(heading)
         # Whose ring is shown: the one for all apps, or one app's (its own, or the one for all apps it uses)
         self.apps = AppChooser(store, _("Settings for"))
         self.apps.when_chosen = lambda app: (
             _("{} uses the ring for all apps.").format(app) if (store.mouse_profile(app) or {}).get("ring") is None else "")
-        left.addWidget(self.apps)
+        top.addWidget(self.apps)
         self.own = QPushButton()
         self.own.setCursor(Qt.CursorShape.PointingHandCursor)
         self.own.clicked.connect(self._own_clicked)
-        left.addWidget(self.own, 0, Qt.AlignmentFlag.AlignLeft)
+        top.addWidget(self.own, 0, Qt.AlignmentFlag.AlignLeft)
+        page.addLayout(top)
 
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        # Options+'s tabs, down the left: Layout (the ring itself) and Settings (how it looks and opens)
+        tabs = QVBoxLayout()
+        tabs.setContentsMargins(34, 14, 10, 20)
+        tabs.setSpacing(6)
+        self.tabs = QButtonGroup(self)
+        self.tabs.setExclusive(True)
+        self.layout_tab = self._tab(_("Layout"), "view-grid", 0)
+        self.settings_tab = self._tab(_("Settings"), "configure", 1)
+        for button in (self.layout_tab, self.settings_tab):
+            tabs.addWidget(button)
+        tabs.addStretch(1)
+        widest = max(button.sizeHint().width() for button in (self.layout_tab, self.settings_tab))
+        for button in (self.layout_tab, self.settings_tab):
+            button.setMinimumWidth(widest)  # one column, as Options+'s
+        self.layout_tab.setChecked(True)
+        self.tabs.idClicked.connect(self._tab_clicked)
+        body.addLayout(tabs)
+
+        self.sections = QStackedWidget()
+        shape = QWidget()
+        shaped = QVBoxLayout(shape)
+        shaped.setContentsMargins(12, 10, 24, 20)
+        shaped.setSpacing(8)
         crumbs = QHBoxLayout()
         self.up = QPushButton("‹  " + _("Back"))
         self.up.setObjectName("flat")
@@ -315,32 +344,61 @@ class RingPage(QWidget):
         self.crumbs = QLabel()
         self.crumbs.setObjectName("hint")
         crumbs.addWidget(self.crumbs, 1)
-        left.addLayout(crumbs)
-
+        self.done = QPushButton(_("Done"))
+        self.done.setObjectName("primary")
+        self.done.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.done.clicked.connect(lambda: self.set_customizing(False))
+        crumbs.addWidget(self.done)
+        shaped.addLayout(crumbs)
+        stage = QGridLayout()  # the button over the ring, in the same cell
         self.preview = ring.RingPreview()
-        left.addWidget(self.preview, 1)
+        self._blur = QGraphicsBlurEffect(self.preview)
+        self._blur.setBlurRadius(14)
+        self.preview.setGraphicsEffect(self._blur)
+        stage.addWidget(self.preview, 0, 0)
+        self.customize = QPushButton(_("Customize ring") + "  →")
+        self.customize.setObjectName("pillButton")
+        self.customize.setAccessibleName(_("Customize ring"))
+        self.customize.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.customize.clicked.connect(lambda: self.set_customizing(True))
+        stage.addWidget(self.customize, 0, 0, Qt.AlignmentFlag.AlignCenter)
+        shaped.addLayout(stage, 1)
+        self.sections.addWidget(shape)
+
+        looks = QWidget()
+        looked = QVBoxLayout(looks)
+        looked.setContentsMargins(12, 10, 24, 20)
+        looked.setSpacing(10)
+        self.style = Segmented([("bubbles", _("Bubbles")), ("pie", _("Pie")), ("grid", _("Tiles"))])
+        self.style.selected.connect(lambda value: self.store.set("ring", "style", value))
+        looked.addWidget(Row(_("Style"), None, self.style))
         self.size = SliderRow(_("Ring size"), 0.7, 1.5, 0.05, "{:.0%}")
         self.size.changed.connect(lambda value: self.store.set("ring", "size", round(value, 2)))
-        left.addWidget(self.size)
+        looked.addWidget(self.size)
         self.shared = hint_label(_("Size and style are shared by all apps."))
-        left.addWidget(self.shared)
+        looked.addWidget(self.shared)
         self.button = Segmented([(key, _(BUTTON_TITLES[key])) for key in config.GESTURE_BUTTONS])
         self.button.selected.connect(lambda key: self.store.assign_role("ring", key))
         self.opens_with = Row(_("The ring opens with"), _("Gestures move to the other thumb button."), self.button)
-        left.addWidget(self.opens_with)
+        looked.addWidget(self.opens_with)
         self.unassigned = QLabel(_("No button opens the ring right now. Assign it on the Buttons page."))
         self.unassigned.setObjectName("banner")
         self.unassigned.setWordWrap(True)
-        left.addWidget(self.unassigned)
-        layout.addLayout(left, 1)
+        looked.addWidget(self.unassigned)
+        looked.addStretch(1)
+        self.sections.addWidget(looks)
+        body.addWidget(self.sections, 1)
 
         self.editor = BubbleEditor()
-        layout.addWidget(self.editor)
+        body.addWidget(self.editor)
+        page.addLayout(body, 1)
 
-        self.preview.bubble_clicked.connect(self._select)
-        self.preview.bubble_opened.connect(self._open)
-        self.preview.add_clicked.connect(self._add)
-        self.preview.center_clicked.connect(self._go_up)
+        # Out of editing, a touch of the ring only starts it (choosing the bubble touched); in it, as always
+        self.preview.bubble_clicked.connect(lambda i: self._pressed(self._select, i) if self._customizing else
+                                            self._enter(i, touched=True))
+        self.preview.bubble_opened.connect(self._opened)
+        self.preview.add_clicked.connect(lambda: self._pressed(self._add) if self._customizing else self._enter())
+        self.preview.center_clicked.connect(lambda: self._pressed(self._go_up) if self._customizing else self._enter())
         self.editor.changed.connect(self._field_changed)
         self.editor.kind_changed.connect(self._kind_changed)
         self.editor.removed.connect(self._remove)
@@ -348,11 +406,86 @@ class RingPage(QWidget):
         self.editor.opened.connect(lambda: self._open(self._index))
         store.changed.connect(self._refresh)
         store.mouse_app_changed.connect(self._app_changed)
+        self.set_customizing(False)
+        self._refresh()
+
+    # -- tabs and editing ------------------------------------------------------
+
+    def _tab(self, text, icon, index):
+        button = QPushButton(text.upper())
+        button.setObjectName("ringTab")
+        button.setAccessibleName(text)
+        button.setCheckable(True)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        if icons.has(icon):
+            button.setIcon(icons.icon(icon))
+            button.setIconSize(QSize(16, 16))
+        self.tabs.addButton(button, index)
+        return button
+
+    def _tab_clicked(self, index):
+        if index == 1:
+            self.set_customizing(False, focus=False)  # the tab clicked keeps the focus
+        self.sections.setCurrentIndex(index)
+
+    def customizing(self):
+        return self._customizing
+
+    def set_customizing(self, on, focus=True):
+        """The ring sharp with its editor out (``on``), or blurred under "Customize ring". Focus goes to the editor's
+        first field, or back to "Customize ring" (``focus``)."""
+        was, self._customizing = self._customizing, bool(on)
+        self._entry_press = False
+        if on and self.sections.currentIndex() != 0:
+            self.layout_tab.setChecked(True)
+            self.sections.setCurrentIndex(0)
+        self.editor.setVisible(self._customizing)
+        self.done.setVisible(self._customizing)
+        self.customize.setVisible(not self._customizing)
+        self._blur.setEnabled(not self._customizing)
+        if focus and self._customizing and not was:
+            self.editor.name.setFocus()
+        elif focus and was and not self._customizing:
+            self.customize.setFocus()
+
+    def _enter(self, index=None, touched=False):
+        """Start editing from the ring (a bubble touched: that one chosen). Nothing of the ring changes."""
+        if index is not None:
+            self._index = index
+        self._refresh()  # first: the editor's name field keeps its text while it has the focus
+        self.set_customizing(True)
+        self._entry_press = touched  # a double click whose first press this was must not open a folder
+
+    def _pressed(self, handler, *args):
+        """A press on the ring while editing: any double click from now on is one of editing."""
+        self._entry_press = False
+        handler(*args)
+
+    def _opened(self, index):
+        """A double click on a folder: opens it while editing, unless its first press is what started editing (Qt
+        sends the double click after the press of its first click, and no press of its own)."""
+        entry, self._entry_press = self._entry_press, False
+        if not self._customizing:
+            self._enter(index)
+        elif not entry:
+            self._open(index)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape and self._customizing:  # popups and menus get theirs first
+            self.set_customizing(False)
+            return
+        super().keyPressEvent(event)
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self.set_customizing(False, focus=False)
+        self._path = []  # back to the top of the ring when shown again
         self._refresh()
 
     def _app_changed(self):
         self.apps.refresh()  # the list first: a page may be refreshed before its chooser
         self._path, self._index = [], 0
+        self.set_customizing(False, focus=False)
         self._refresh()
 
     # -- whose ring ------------------------------------------------------------
@@ -471,6 +604,7 @@ class RingPage(QWidget):
         elif before[2]:
             self._path, self._index = [], 0
             self._store_root(builder())
+            self.set_customizing(True)  # the new ring, ready to change
             self._refresh()
 
     def _save_preset(self):
@@ -585,9 +719,12 @@ class RingPage(QWidget):
         self.opens_with.setVisible(profile is None)
         self.editor.setEnabled(editable and self._index >= 0)
         if self._index >= 0:
+            shown = (profile["app"] if profile else None, tuple(self._path), self._index)
             self.editor.show_bubble(
-                level[self._index], self._index, len(level), may_be_folder=len(self._path) + 1 < config.MAX_RING_DEPTH
+                level[self._index], self._index, len(level), may_be_folder=len(self._path) + 1 < config.MAX_RING_DEPTH,
+                fresh=shown != self._shown,
             )
+            self._shown = shown
             self.editor.delete.setEnabled(bool(self._path) or len(level) > 1)
         self.size.set_value(cfg["ring"]["size"])
         self.button.set_value(next((key for key in config.GESTURE_BUTTONS if cfg["buttons"][key].get("type") == "ring"), None))

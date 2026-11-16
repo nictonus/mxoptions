@@ -1092,6 +1092,7 @@ class Pages(unittest.TestCase):
         store.set("ring", "bubbles", [bubble("g1"), bubble("g2")])
         store.add_mouse_profile(KATE)
         page = self.page(ring_page.RingPage, store)
+        page.settings_tab.click()  # style, size and the button that opens it: the Settings tab
         self.assertTrue(page.opens_with.isVisible() and page.own.isHidden() and page.shared.isHidden())
         store.set_mouse_app(KATE)
         self.assertFalse(page.editor.isEnabled())  # it uses the ring for all apps
@@ -1121,6 +1122,7 @@ class Pages(unittest.TestCase):
             page.own.click()
         self.assertIsNone(store.mouse_profile(KATE)["ring"])
         store.set_profile_button(KATE, "panel", COPY)
+        page.settings_tab.click()  # the preset took it to the ring being changed: Layout
         self.assertTrue(page.unassigned.isVisible())  # no button opens the ring there
         store.set_mouse_app(None)
         self.assertTrue(page.unassigned.isHidden())
@@ -1307,6 +1309,7 @@ class Pages(unittest.TestCase):
                 page = ring_page.RingPage(store)  # owned by this case: gone before the next one
                 page.resize(1100, 700)
                 page.show()
+                page.set_customizing(True)  # folders open while the ring is being changed
                 try:
                     if nested:
                         page.preview.bubble_opened.emit(0)  # what a double click on the folder sends

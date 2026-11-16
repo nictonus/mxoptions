@@ -150,6 +150,19 @@ QToolTip {{ background: {CARD}; color: {TEXT}; border: 1px solid {BORDER}; paddi
 #deviceKind {{ color: {MUTED}; font-size: 8pt; font-weight: 600; letter-spacing: 1px; }}
 #heroName {{ font-size: 15pt; font-weight: 600; }}
 #homeTitle {{ font-size: 24pt; font-weight: 700; }}
+QPushButton#ringTab {{
+    text-align: left; padding: 9px 14px; border: 2px solid transparent; border-radius: 6px;
+    color: {MUTED}; font-size: 9pt; font-weight: 700; letter-spacing: 1px; background: transparent;
+}}
+QPushButton#ringTab:hover {{ color: {TEXT}; }}
+QPushButton#ringTab:checked {{ background: {ACCENT}; color: {ACCENT_TEXT}; }}
+QPushButton#ringTab:focus {{ border-color: {ACCENT_INK}; }}
+QPushButton#pillButton {{
+    background: {ACCENT}; color: {ACCENT_TEXT}; border: 2px solid {ACCENT}; border-radius: 22px;
+    padding: 12px 26px; font-weight: 700;
+}}
+QPushButton#pillButton:hover {{ background: {ACCENT_HOVER}; border-color: {ACCENT_HOVER}; }}
+QPushButton#pillButton:focus {{ border-color: {TEXT}; }}
 QPushButton#homeDevice {{ background: transparent; border: 2px solid transparent; border-radius: 16px; }}
 QPushButton#homeDevice:hover {{ background: {CARD}; }}
 QPushButton#homeDevice:focus {{ border-color: {ACCENT}; }}
