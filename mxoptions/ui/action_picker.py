@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 from .. import actions, config, gestures
 from ..i18n import _
 from . import icons, ring, theme
-from .editors import MacroDialog, ScriptDialog
+from .editors import EasySwitchDialog, MacroDialog, ScriptDialog
 from .recorder import ShortcutRecorder
 from .widgets import ElidedButton, ElidedLabel, InfoButton, Row, SliderRow, SwatchRow, Switch, hint_label, titled, ui_scale
 
@@ -100,6 +100,7 @@ class ActionList(QWidget):
         self.inherit_row = self._row(_("As in all apps"), "edit-undo")
         self.inherit_row.clicked.connect(lambda: self.picked.emit(None))
         self.inherit_row.hide()
+        self.two_row = self.two_summary = None  # with an Easy-Switch section only (none among a macro's steps)
         for category, title in actions.CATEGORIES:
             presets = [p for p in actions.PRESETS if p.category == category and p.id not in exclude and p.available]
             if not presets:
@@ -111,6 +112,11 @@ class ActionList(QWidget):
                 row.clicked.connect(lambda _checked=False, p=preset: self.picked.emit(copy.deepcopy(p.action)))
                 self._rows[preset.id] = row
                 rows.append((row, None))
+            if category == "easyswitch":  # Options+'s "Easy-Switch 2 devices": set up in a dialog
+                self.two_row = self._row(_("Easy-Switch 2 devices"), "computer")
+                self.two_summary = self._summary()
+                self.two_row.clicked.connect(lambda: self._edit_with(EasySwitchDialog, "host"))
+                rows.append((self.two_row, self.two_summary))
             self._sections.append((label, rows))
 
         label = self._category(_("Custom"))
@@ -208,7 +214,9 @@ class ActionList(QWidget):
     def _sync_custom(self):
         for row, extra in ((self.keys_row, self.recorder), (self.command_row, self.command),
                            (self.script_row, self.script_summary), (self.macro_row, self.macro_summary),
-                           (self.hook_row, self.hook)):
+                           (self.hook_row, self.hook), (self.two_row, self.two_summary)):
+            if extra is None:
+                continue
             extra.setVisible(row.isChecked() and not row.isHidden())
 
     def set_current(self, action):
@@ -223,6 +231,9 @@ class ActionList(QWidget):
             self.inherit_row.setChecked(True)
         elif preset and preset.id in self._rows:
             self._rows[preset.id].setChecked(True)
+        elif self.two_row is not None and kind == "host" and (actions.host_target(action) or (0, None))[1] is not None:
+            self.two_row.setChecked(True)
+            self.two_summary.setText(actions.describe(action))
         elif kind == "keys":
             self.keys_row.setChecked(True)
             self.recorder.set_keys(action.get("keys", []))

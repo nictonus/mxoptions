@@ -58,6 +58,8 @@ def parse_action(text):
             return None
     if not isinstance(action, dict) or action.get("type") not in TRIGGERABLE:
         return None
+    if action["type"] == "host" and actions.host_target(action) is None:
+        return None  # an Easy-Switch not well-formed: never run as part of it
     return action
 
 

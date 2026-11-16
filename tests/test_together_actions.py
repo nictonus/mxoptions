@@ -2,6 +2,7 @@
 other over Flow or not. The engine runs on the test's thread; nodes and devices are synthetic (tests/test_keyboard.py)."""
 
 import copy
+import json
 import struct
 import sys
 import threading
@@ -18,28 +19,43 @@ from mxoptions import actions, api, app, config, device, flow_service, hidpp
 
 BOTH = {"type": "host", "host": 1, "both": True}  # Easy-Switch 2
 TOGETHER = {"type": "together"}
+TWO = {"type": "host", "host": 0, "keyboard": 2}  # Easy-Switch 2 devices: the mouse to 1, the keyboard to 3
 
 
 class Shape(unittest.TestCase):
     def test_the_actions_are_kept_where_a_key_a_button_or_a_gesture_may_have_them(self):
-        for preset in ("both_1", "both_2", "both_3", "together"):
-            action = actions.PRESET_BY_ID[preset].action
-            with self.subTest(preset):
+        for action in (TOGETHER, BOTH, TWO, {"type": "host", "host": 1}):
+            with self.subTest(action):
                 self.assertTrue(config.keyboard_action(action))
                 self.assertTrue(config.profile_button_action(action))
                 self.assertTrue(config.gesture_slot_action(action))
-                self.assertEqual(actions.describe(action), actions.PRESET_BY_ID[preset].label)
-                self.assertIn(preset, api.MouseApi.ListActions(None))
-                self.assertEqual(api.parse_action(preset), action)
-        self.assertEqual(actions.PRESET_BY_ID["both_3"].action["host"], 2)
+                self.assertEqual(api.parse_action(json.dumps(action)), action)
+        self.assertIn("together", api.MouseApi.ListActions(None))
+        self.assertEqual(api.parse_action("together"), TOGETHER)
+        self.assertEqual(actions.host_target(TWO), (0, 2))
+        self.assertEqual(actions.host_target(BOTH), (1, 1))  # as PR #8 saved them
+        self.assertEqual(actions.host_target({"type": "host", "host": 1}), (1, None))
 
-    def test_anything_else_is_not(self):
-        for action in ({"type": "host", "host": 1, "both": "yes"}, {"type": "host", "host": 1, "both": False},
-                       {"type": "host", "host": 1, "both": True, "more": 1}, {"type": "host", "host": 16, "both": True},
-                       {"type": "together", "on": True}):
+    def test_the_same_number_presets_are_gone_and_their_saved_actions_are_still_named(self):
+        for preset in ("both_1", "both_2", "both_3"):
+            self.assertNotIn(preset, actions.PRESET_BY_ID)
+            self.assertNotIn(preset, api.MouseApi.ListActions(None))
+        self.assertEqual(actions.describe(BOTH), "Mouse and keyboard to Easy-Switch 2")
+        self.assertEqual(actions.describe(TWO), "Mouse to Easy-Switch 1, keyboard to 3")
+        self.assertEqual(actions.icon_name(TWO), "computer")
+
+    def test_anything_else_is_not_and_never_runs(self):
+        bad = ({"type": "host", "host": 1, "both": "yes"}, {"type": "host", "host": 1, "both": False},
+               {"type": "host", "host": 1, "both": True, "more": 1}, {"type": "host", "host": 16, "both": True},
+               {"type": "host", "host": 1, "keyboard": True}, {"type": "host", "host": 1, "keyboard": "2"},
+               {"type": "host", "host": 1, "keyboard": 16}, {"type": "host", "host": 1, "keyboard": 2, "both": True},
+               {"type": "host", "host": True}, {"type": "together", "on": True})
+        for action in bad:
             with self.subTest(action):
                 self.assertFalse(config.keyboard_action(action))
-        self.assertTrue(config.keyboard_action({"type": "host", "host": 1}))  # as it always was
+                if action["type"] == "host":
+                    self.assertIsNone(actions.host_target(action))
+                    self.assertIsNone(api.parse_action(json.dumps(action)))
 
     def test_the_tray_says_which_way_it_went(self):
         self.assertEqual(app.together_message(True, True), "Mouse and keyboard move together")
@@ -227,6 +243,51 @@ class Together(unittest.TestCase):
         self.assertIn("stays (held)", logs.output[-1])
         self.assertEqual((self.mouse.switched, self.kb.switched), ([1], []))
         self.assertTrue(diverts(self.kb)[-1][1])  # its keys taken again
+
+    # -- each to its own channel (Easy-Switch 2 devices) -----------------------------------------------------------
+
+    def test_each_goes_to_its_own_channel(self):
+        rig = self.make()
+        rig.engine._device_action({"type": "host", "host": 2, "keyboard": 1}, "press")
+        rig.settle()
+        self.assertEqual((self.mouse.switched, self.kb.switched), ([2], [1]))
+
+    def test_the_keyboard_s_own_channel_decides_whether_both_go(self):
+        rig = self.make()  # the keyboard's third channel is not paired
+        with self.assertLogs("mxoptions.engine", "INFO") as logs:
+            rig.engine._device_action({"type": "host", "host": 1, "keyboard": 2}, "press")
+        self.assertIn("the mouse and keyboard stay (pairing)", logs.output[-1])
+        rig.settle()
+        self.assertEqual((self.mouse.switched, self.kb.switched), ([], []))
+
+    def test_a_mouse_on_its_channel_already_lets_the_keyboard_go_alone(self):
+        rig = self.make()
+        rig.engine._device_action({"type": "host", "host": 0, "keyboard": 1}, "press")
+        self.assertIsNone(rig.kb._follow_wait)  # nothing sent away to wait for
+        rig.settle()
+        self.assertEqual((self.mouse.switched, self.kb.switched), ([], [1]))
+
+    def test_from_a_key_each_to_its_own_on_release(self):
+        rig = self.make(keys={"0x0f01": {"type": "host", "host": 2, "keyboard": 1}})
+        self.keys(0x0F01)
+        self.assertEqual((self.mouse.switched, self.kb.switched), ([], []))
+        self.keys()
+        self.assertEqual((self.mouse.switched, self.kb.switched), ([2], [1]))
+
+    def test_one_not_well_formed_moves_nothing_from_anywhere(self):
+        rig = self.make()
+        for action in ({"type": "host", "host": 1, "keyboard": True}, {"type": "host", "host": 1, "keyboard": "1"},
+                       {"type": "host", "host": 1, "keyboard": 16}, {"type": "host", "host": 1, "both": False},
+                       {"type": "host", "host": 1, "keyboard": 1, "both": True}, {"type": "host", "host": 1, "x": 0}):
+            with self.subTest(action):
+                for phase in ("press", "trigger"):
+                    rig.engine._device_action(action, phase)
+                    rig.kb.device_action(action, phase)
+                rig.kb._held[0x0F01] = action  # as if a key had it when it went down
+                rig.kb._pressed = rig.kb._pressed | {0x0F01}
+                self.keys()
+                rig.settle()
+                self.assertEqual((self.mouse.switched, self.kb.switched), ([], []))
 
     # -- from a key of the keyboard ----------------------------------------------------------------------------------
 

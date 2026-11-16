@@ -32,7 +32,7 @@ import threading
 import time
 
 from . import config, device, hidpp, kbsettings, paths
-from .actions import Executor, here
+from .actions import Executor, here, host_target
 from .hidpp import HidppCancelled, HidppClosed, HidppError, HidppTimeout
 
 log = logging.getLogger(__name__)
@@ -1020,10 +1020,11 @@ class KeyboardSide:
         if action.get("type") == "together" and phase != "release":
             self.engine._emit("flow", ("together", None))  # see engine._device_action
             return
-        if (action.get("type") != "host" or action.get("both") is True  # that one goes on the key's release: _on_keys
+        target = host_target(action) if action.get("type") == "host" else None
+        if (target is None or target[1] is not None  # with the keyboard's channel it goes on the key's release: _on_keys
                 or phase == "release" or dev is None or not self.online):
             return
-        host = action.get("host", 0)
+        host = target[0]
         if not 0 <= host < dev.host_count or host == self._hosts[0]:
             return
         self._want(("host", host))
@@ -1134,8 +1135,9 @@ class KeyboardSide:
             action = self._held.pop(cid, None)
             if action:
                 log.info("key %s up", config.key_id(cid))
-                if action.get("type") == "host" and action.get("both") is True:
-                    along = action.get("host", 0)
+                target = host_target(action) if action.get("type") == "host" else None
+                if target is not None and target[1] is not None:
+                    along = target
                     continue
                 try:
                     if action.get("type") == "ring":
@@ -1148,7 +1150,7 @@ class KeyboardSide:
         self._pressed = pressed
         if along is not None:
             try:
-                self.engine._switch_host(along, both=True)  # every key of the report let go of first: see go_along_refusal
+                self.engine._switch_host(*along)  # every key of the report let go of first: see go_along_refusal
             except Exception as err:
                 if failed is None:
                     failed = err

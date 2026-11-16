@@ -14,7 +14,8 @@ import unicodedata
 
 from . import device, environment, flow, gestures, paths
 from .i18n import _
-from .actions import DEFAULT, MACRO_STEPS, MAX_DELAY_MS, MAX_MACRO_STEPS, PRESET_BY_ID, SCROLLS, STEP_ACTIONS, dial_available, keys_label
+from .actions import (DEFAULT, MACRO_STEPS, MAX_DELAY_MS, MAX_MACRO_STEPS, PRESET_BY_ID, SCROLLS, STEP_ACTIONS, dial_available,
+                      host_target, keys_label)
 from .keys import CODES as KEY_CODES
 from .vinput import MOUSE_BUTTONS
 
@@ -540,9 +541,7 @@ def keyboard_action(action):
                 and isinstance(action.get("repeat", False), bool) and isinstance(action.get("stop_on_press", False), bool)
                 and all(macro_step(step) for step in steps))
     if kind == "host":
-        host = action.get("host")
-        return (type(host) is int and 0 <= host <= 15 and set(action) <= {"type", "host", "both"}
-                and action.get("both", True) is True)  # "both": the mouse and the keyboard go
+        return host_target(action) is not None
     if kind == "together":
         return action == {"type": "together"}
     if kind == "hook":

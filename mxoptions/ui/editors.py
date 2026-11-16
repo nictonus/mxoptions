@@ -424,3 +424,96 @@ class MacroDialog(_Dialog):
         if self.again.isChecked():
             made["stop_on_press"] = True  # left out when off: macros saved before stay as they were
         return made
+
+
+class EasySwitchDialog(QDialog):
+    """Options+'s "Easy-Switch 2 devices": the mouse to one channel and the keyboard to another, each channel named by
+    the computer the device itself says is paired there, as it says it now (refreshed while the dialog is open)."""
+
+    DEVICES = (("mouse", "Mouse", "Mouse channel"), ("keyboard", "Keyboard", "Keyboard channel"))
+
+    def __init__(self, action=None, parent=None, store=None):
+        super().__init__(parent)
+        self.store = store if store is not None else getattr(parent.window() if parent else None, "store", None)
+        title = _("Easy-Switch 2 devices")
+        self.setWindowTitle(title)
+        self.setModal(True)
+        self.setMinimumWidth(int(400 * ui_scale()))  # as wide as Options+'s
+        body = QVBoxLayout(self)
+        body.setContentsMargins(22, 20, 22, 18)
+        body.setSpacing(10)
+        heading = QLabel(title)
+        heading.setObjectName("pickerTitle")
+        body.addWidget(heading)
+        body.addWidget(hint_label(_("Each device goes to its own channel: pick the same computer for both.")))
+        target = actions.host_target(action) if action else None
+        self._chosen = {"mouse": target[0] if target else None,
+                        "keyboard": target[1] if target and target[1] is not None else None}
+        self._counts = {"mouse": 3, "keyboard": 3}  # kept while a device is away
+        self.names, self.combos = {}, {}
+        for which, _title, accessible in self.DEVICES:
+            self.names[which] = _field_label("")
+            body.addWidget(self.names[which])
+            combo = self.combos[which] = QComboBox()
+            combo.setAccessibleName(_(accessible))
+            combo.currentIndexChanged.connect(lambda _i, w=which: self._chosen.update({w: self.combos[w].currentData()}))
+            body.addWidget(combo)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        cancel = QPushButton(_("Cancel"))
+        cancel.clicked.connect(self.reject)
+        save = self.save = QPushButton(_("Save"))
+        save.setObjectName("primary")
+        save.setDefault(True)
+        save.clicked.connect(self.accept)
+        for button in (cancel, save):
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            row.addWidget(button)
+        body.addLayout(row)
+        self._refresh()
+        if self.store is not None:
+            self.store.state_changed.connect(self._refresh)
+
+    def _device(self, which):
+        """(name, connected, current channel or None, hosts) of the mouse or the keyboard, as the store has it now."""
+        state = self.store.state if self.store is not None else {}
+        found = state.get("keyboard") if which == "keyboard" else state
+        if not found or not found.get("connected"):
+            return "", False, None, []
+        current = found.get("current_host")
+        hosts = [host for host in found.get("hosts") or [] if isinstance(host, dict)]
+        return found.get("name") or "", True, current if type(current) is int and 0 <= current < len(hosts) else None, hosts
+
+    def _refresh(self, *_args):
+        for which, title, _accessible in self.DEVICES:
+            name, connected, current, hosts = self._device(which)
+            self.names[which].setText(f"{_(title)} · {name}" if name else _(title))
+            if hosts:
+                self._counts[which] = len(hosts)
+            chosen = self._chosen[which]
+            if chosen is None:  # first channel that is not this computer
+                chosen = next((i for i in range(self._counts[which]) if i != current), 0)
+            combo = self.combos[which]
+            combo.blockSignals(True)
+            combo.clear()
+            for index in range(max(self._counts[which], chosen + 1)):
+                host = hosts[index] if index < len(hosts) else None
+                label = (host["name"] or (_("Paired") if host.get("paired") else _("Empty"))) if host else ""
+                text = f"{index + 1} · {label}" if label else str(index + 1)
+                if index == current:
+                    text += " " + _("(this computer)")
+                combo.addItem(text, index)
+            combo.setCurrentIndex(combo.findData(chosen))
+            combo.blockSignals(False)
+            self._chosen[which] = chosen
+
+    def done(self, result):
+        if self.store is not None:
+            try:
+                self.store.state_changed.disconnect(self._refresh)
+            except (RuntimeError, TypeError):
+                pass
+        super().done(result)
+
+    def action(self):
+        return {"type": "host", "host": self._chosen["mouse"], "keyboard": self._chosen["keyboard"]}

@@ -15,7 +15,7 @@ import threading
 import time
 
 from . import APP_ID, config, device, environment, gestures, hidpp, keyboard, vinput
-from .actions import Executor, here, keys
+from .actions import Executor, here, host_target, keys
 
 if sys.platform == "win32":
     from . import rumble_windows as rumble  # the same thing, through the driver Windows needs for it
@@ -968,9 +968,12 @@ class Engine:
                 self._cue(device.WAVE_STATE)  # felt where the mouse is here
                 self._emit("flow", ("together", None))
             return
-        if kind == "host" and action.get("both") is True:  # the keyboard goes too, with or without the mouse here
-            if phase != "release":
-                self._switch_host(action.get("host", 0), both=True)
+        if kind == "host":
+            target = host_target(action)
+            if target is None:
+                log.debug("Easy-Switch action not well-formed: nothing done")
+            elif phase != "release":
+                self._switch_host(*target)  # with the keyboard's channel the keyboard goes too, mouse here or not
             return
         mouse = self.mouse
         if not mouse or not self.online:
@@ -994,8 +997,6 @@ class Engine:
             elif kind == "dpi_shift" and phase in ("press", "release"):
                 self._dpi_shift = phase == "press"
                 self._apply_pointer()
-            elif kind == "host" and phase != "release":
-                self._switch_host(action.get("host", 0))
             elif kind == "flow" and phase != "release":
                 self._emit("flow", ("asked", None))  # the Flow service knows where the other computer is
         except HidppClosed:
@@ -1003,29 +1004,33 @@ class Engine:
         except HidppError as e:
             log.warning("%s failed: %s", kind, e)
 
-    def _switch_host(self, host, both=False):
-        """The mouse to channel ``host``; with ``both`` the keyboard after it (keyboard.KeyboardSide.go_along), or
-        the keyboard alone where no mouse is here. Both or neither: where the keyboard is here and cannot go, the
-        mouse stays too, and the log says why."""
+    def _switch_host(self, host, keyboard=None):
+        """The mouse to channel ``host``; with ``keyboard`` (a channel) the keyboard to that one after it
+        (keyboard.KeyboardSide.go_along). Both or neither: where the keyboard is here and cannot go, the mouse stays
+        too, and the log says why. No keyboard here: the mouse alone; no mouse here, or already on ``host``: the
+        keyboard alone."""
         mouse = self.mouse
         here = mouse is not None and self.online
         along = False
-        if both:
-            why = self.keyboard.go_along_refusal(host)
+        if keyboard is not None:
+            why = self.keyboard.go_along_refusal(keyboard)
             if why not in (None, "not-here"):
                 log.info("the mouse and keyboard stay (%s)", why)
                 return
             along = why is None
+        sent = False
         if here:
-            if not 0 <= host < mouse.host_count or host == self._hosts[0]:
+            if not 0 <= host < mouse.host_count:
                 return
-            try:
-                mouse.change_host(host)
-            except HidppError as e:
-                log.warning("host switch failed: %s", e)
-                return
+            if host != self._hosts[0]:
+                try:
+                    mouse.change_host(host)
+                except HidppError as e:
+                    log.warning("host switch failed: %s", e)
+                    return
+                sent = True
         if along:
-            self.keyboard.go_along(host, mouse_sent=here)
+            self.keyboard.go_along(keyboard, mouse_sent=sent)
 
     def _moved_lately(self):
         """Whether the mouse itself was in use a moment ago; True as well where that cannot be known."""

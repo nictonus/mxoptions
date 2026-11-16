@@ -15,7 +15,8 @@ An action is a plain JSON-able dict:
     {"type": "dpi_cycle"}                    toggle between the two pointer speeds
     {"type": "dpi_shift"}                    precision speed while held
     {"type": "host", "host": n}              Easy-Switch to channel n
-    {"type": "host", "host": n, "both": true}   the mouse and the keyboard both to channel n (from a key: on its release)
+    {"type": "host", "host": n, "keyboard": k}  the mouse to channel n and the keyboard to channel k (from a key: on its
+                                             release); "both": true in place of "keyboard" sends the keyboard to n
     {"type": "together"}                     the mouse and the keyboard follow each other over Flow, or no longer
     {"type": "flow"}                         move to the other computer of Flow, clipboard included
     {"type": "gestures", "tap": a, "up": a, "down": a, "left": a, "right": a}
@@ -162,9 +163,6 @@ _PRESETS = [
     ("host_1", "easyswitch", "Easy-Switch 1", "computer", {"type": "host", "host": 0}),
     ("host_2", "easyswitch", "Easy-Switch 2", "computer", {"type": "host", "host": 1}),
     ("host_3", "easyswitch", "Easy-Switch 3", "computer", {"type": "host", "host": 2}),
-    ("both_1", "easyswitch", "Mouse and keyboard to Easy-Switch 1", "computer", {"type": "host", "host": 0, "both": True}),
-    ("both_2", "easyswitch", "Mouse and keyboard to Easy-Switch 2", "computer", {"type": "host", "host": 1, "both": True}),
-    ("both_3", "easyswitch", "Mouse and keyboard to Easy-Switch 3", "computer", {"type": "host", "host": 2, "both": True}),
     ("together", "easyswitch", "Mouse and keyboard together: on/off", "insert-link", {"type": "together"}),
     ("flow", "easyswitch", "Move to the other computer (Flow)", "transform-move", {"type": "flow"}),
 ]
@@ -264,6 +262,23 @@ def find_preset(action):
     return None
 
 
+def _channel(value):
+    return type(value) is int and 0 <= value <= 15
+
+
+def host_target(action):
+    """(channel of the mouse, channel of the keyboard or None) of an Easy-Switch action, or None for one that is not
+    whole and well-formed: then nothing of it runs."""
+    if not (isinstance(action, dict) and action.get("type") == "host" and _channel(action.get("host"))
+            and set(action) <= {"type", "host", "both", "keyboard"} and not {"both", "keyboard"} <= set(action)):
+        return None
+    if "keyboard" in action:
+        return (action["host"], action["keyboard"]) if _channel(action["keyboard"]) else None
+    if "both" in action:
+        return (action["host"], action["host"]) if action["both"] is True else None
+    return action["host"], None
+
+
 def describe(action):
     """Human-readable label of an action."""
     if isinstance(action, dict) and action.get("type") == "gestures" and gestures.hold_mode(action):
@@ -272,6 +287,11 @@ def describe(action):
     if preset:
         return _(preset.label)
     kind = (action or {}).get("type")
+    target = host_target(action) if kind == "host" else None
+    if target and target[1] is not None:
+        if target[0] == target[1]:
+            return _("Mouse and keyboard to Easy-Switch {n}").format(n=target[0] + 1)
+        return _("Mouse to Easy-Switch {mouse}, keyboard to {keyboard}").format(mouse=target[0] + 1, keyboard=target[1] + 1)
     if kind == "keys":
         return keys_label(action.get("keys", [])) or _("Keyboard shortcut")
     if kind == "command":
@@ -298,7 +318,7 @@ def icon_name(action):
         return preset.icon
     kind = (action or {}).get("type")
     return {"keys": "input-keyboard", "command": "system-run", "script": "text-x-script", "macro": "media-record",
-            "hook": "network-connect"}.get(kind, "configure")
+            "hook": "network-connect", "host": "computer"}.get(kind, "configure")
 
 
 def describe_step(step):
