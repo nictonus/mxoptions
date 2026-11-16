@@ -250,6 +250,7 @@ QScrollArea > QWidget > QWidget {{ background: transparent; }}
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
 QScrollBar::handle:vertical {{ background: {BORDER}; border-radius: 3px; min-height: 30px; }}
 QScrollBar::handle:vertical:hover {{ background: {TRACK}; }}
+QScrollBar#quietBar[idle="true"]::handle:vertical {{ background: transparent; }}
 QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page {{ background: none; height: 0; }}
 QMenu {{ background: {CARD}; border: 1px solid {BORDER}; padding: 6px; }}
 QMenu::item {{ padding: 6px 18px; border-radius: 6px; }}

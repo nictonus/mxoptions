@@ -42,12 +42,18 @@ STATE = {
 
 # A made-up keyboard for --keyboard, with the control ids of a real MX keyboard's top row; it keeps the Easy-Switch
 # keys and Fn.
+# The keys of an MX Mechanical, where Logi Options+ draws them: F1 to F12 (the F-key each says it is on), the volume
+# keys after F12, Easy-Switch (kept by the keyboard), the four keys over the number pad, the navigation keys, and Fn
+KEYBOARD_POS = {cid: n for n, cid in enumerate((0x00C7, 0x00C8, 0x00E2, 0x00E3, 0x0103, 0x0108, 0x010A, 0x011C, 0x00E4,
+                                                0x00E5, 0x00E6, 0x00E7), 1)}
+KEPT = (0x00D1, 0x00D2, 0x00D3, 0x0034)
 KEYBOARD = {
     "connected": True, "known": True, "name": "MX Mechanical", "battery": (64, 0), "current_host": 0,
     "hosts": [{"paired": True, "name": "workstation"}, {"paired": True, "name": "laptop"}, {"paired": False, "name": ""}],
-    "keys": [{"id": f"0x{cid:04x}", "cid": cid, "tid": cid, "protected": cid in (0x00D1, 0x00D2, 0x00D3, 0x0034),
-              "active": cid in (0x00E0, 0x010A, 0x00E5), "native_reason": "protected" if cid in (0x00D1, 0x00D2, 0x00D3, 0x0034) else None}
-             for cid in (0x00D1, 0x00D2, 0x00D3, 0x0034, 0x00C7, 0x00C8, 0x00E0, 0x0103, 0x0108, 0x010A, 0x011C, 0x00E5)],
+    "keys": [{"id": f"0x{cid:04x}", "cid": cid, "tid": cid, "protected": cid in KEPT,
+              "active": cid in (0x011C, 0x00E5), "native_reason": "protected" if cid in KEPT else None,
+              "pos": KEYBOARD_POS.get(cid, 0)}
+             for cid in (*KEYBOARD_POS, 0x00E8, 0x00E9, *KEPT, 0x000A, 0x006E, 0x00D4, 0x006F, *range(0x0116, 0x011C))],
     "reason": None, "firmware": "12.3.45", "settings": ["fn", "backlight", "platform", "disable", "locks"],
     "controls": {
         "disable": {"value": ["insert"], "keys": ["caps_lock", "num_lock", "scroll_lock", "insert", "super"],
@@ -62,7 +68,7 @@ KEYBOARD = {
                       "writable": True, "busy": False, "outcome": None},
     },
 }
-KEYBOARD_KEYS = {"0x00e0": {"type": "keys", "keys": ["KEY_LEFTCTRL", "KEY_C"]}, "0x010a": {"type": "keys", "keys": ["KEY_LEFTCTRL", "KEY_V"]},
+KEYBOARD_KEYS = {"0x011c": {"type": "keys", "keys": ["KEY_LEFTCTRL", "KEY_C"]}, "0x0108": {"type": "keys", "keys": ["KEY_LEFTCTRL", "KEY_V"]},
                  "0x00e5": {"type": "host", "host": 1}}
 
 

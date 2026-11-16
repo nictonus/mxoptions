@@ -1385,7 +1385,7 @@ class KeyboardSide:
             else:  # someone else's, or diverted by a run of this program it cannot tell, or not known yet
                 reason = {"foreign": "foreign", "diverted": "changed"}.get(state, "pending")
             keys.append({"id": config.key_id(cid), "cid": cid, "tid": control.tid, "protected": protected,
-                         "active": cid in self._active, "native_reason": reason})
+                         "active": cid in self._active, "native_reason": reason, "pos": getattr(control, "pos", 0)})
             if len(keys) >= MAX_CONTROLS:
                 break
         return keys

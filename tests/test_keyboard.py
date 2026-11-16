@@ -2497,5 +2497,22 @@ class PressAgain(unittest.TestCase):
         self.assertEqual(self.gate.drained(), ["KEY_A", "KEY_A", "KEY_B"])
 
 
+
+class KeyPositions(unittest.TestCase):
+    """The F-key each control is on, as getCidInfo says it (byte 5): kept from 1 to 16, else 0 (not said)."""
+
+    def test_the_f_key_of_each_key_is_in_the_state(self):
+        said = {0x0F01: 0, 0x0F02: 1, 0x0F03: 12, 0x0F04: 16, 0x0F05: 17, 0x0F06: 255}
+        kb = FakeDevice(controls=[(cid, cid, 0x30, pos) for cid, pos in said.items()], unit=UNIT_A, model=MODEL)
+        rig = Rig(self, {1: kb, 2: mouse_device()}).start()
+        self.assertEqual({cid: rig.kb.device.controls[cid].pos for cid in said},
+                         {0x0F01: 0, 0x0F02: 1, 0x0F03: 12, 0x0F04: 16, 0x0F05: 0, 0x0F06: 0})
+        self.assertEqual({cid: rig.key(cid)["pos"] for cid in said},
+                         {0x0F01: 0, 0x0F02: 1, 0x0F03: 12, 0x0F04: 16, 0x0F05: 0, 0x0F06: 0})
+
+    def test_a_control_made_without_one_has_none(self):
+        self.assertEqual(device.Control(0x0F01, 0x0F01, 0x30).pos, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

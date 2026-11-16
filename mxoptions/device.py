@@ -132,10 +132,11 @@ def family(name):
 
 
 class Control:
-    def __init__(self, cid, tid, flags):
+    def __init__(self, cid, tid, flags, pos=0):
         self.cid = cid
         self.tid = tid
         self.flags = flags
+        self.pos = pos  # the F-key it is on (1 to 16), or 0: not said
 
     @property
     def divertable(self):
@@ -203,7 +204,8 @@ class Mouse:
             for i in range(self.call(REPROG_CONTROLS_V4, 0)[0]):
                 info = self.call(REPROG_CONTROLS_V4, 1, i)
                 cid, tid = struct.unpack("!HH", info[:4])
-                self.controls[cid] = Control(cid, tid, info[4] | (info[8] << 8))
+                pos = info[5]  # getCidInfo: F-key position, 0 = not specified, 1 to 16 = F1 to F16
+                self.controls[cid] = Control(cid, tid, info[4] | (info[8] << 8), pos if 1 <= pos <= 16 else 0)
 
         if self.has(ADJUSTABLE_DPI):
             self._load_dpi()

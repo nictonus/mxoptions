@@ -109,8 +109,8 @@ def names(actions):
 # picked to exercise the code, and say nothing about any real device.
 
 class FakeDevice:
-    """A synthetic HID++ 2.0 device behind a FakePort slot. ``controls``: [(cid, tid, flags)], flags as getCidInfo
-    gives them (byte 4 low, byte 8 high). ``reporting``: cid -> [flags, remap] as getCidReporting answers.
+    """A synthetic HID++ 2.0 device behind a FakePort slot. ``controls``: [(cid, tid, flags)] or [(cid, tid, flags, pos)], flags
+    as getCidInfo gives them (byte 4 low, byte 8 high), pos its byte 5 (the F-key; 0 when left out). ``reporting``: cid -> [flags, remap] as getCidReporting answers.
     ``entities``: the getFwInfo replies of DEVICE_INFO, by index; ``extra``: further feature ids it lists, answered
     with an error, except for the settings in ``settings``: {FN_INVERSION_HOSTS: {host: [state, default]},
     FN_INVERSION_DEFAULT: [state, default], FN_INVERSION: [state], HOSTS_INFO: current host it says}, each
@@ -128,7 +128,7 @@ class FakeDevice:
         self.name = name
         self.kind = kind
         self.controls = list(controls)
-        self.reporting = {cid: [0, 0] for cid, _tid, _flags in self.controls}
+        self.reporting = {control[0]: [0, 0] for control in self.controls}
         self.unit, self.model = unit, model
         self.battery = battery
         self.hosts = list(hosts)
@@ -185,8 +185,8 @@ class FakeDevice:
             if function == 0:
                 return bytes([len(self.controls)])
             if function == 1:
-                cid, tid, flags = self.controls[params[0]]
-                return struct.pack("!HHBBBBB", cid, tid, flags & 0xFF, 0, 0, 0, flags >> 8)
+                cid, tid, flags, *pos = self.controls[params[0]]
+                return struct.pack("!HHBBBBB", cid, tid, flags & 0xFF, pos[0] if pos else 0, 0, 0, flags >> 8)
             cid = struct.unpack("!H", params[:2])[0]
             if cid not in self.reporting:
                 return 2

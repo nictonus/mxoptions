@@ -98,7 +98,8 @@
     "flow-peer-pause": "Two Linux computers paired over Flow: pause one: the pointer never crosses to it, nothing is copied or sent to it, it stays paired; resume: crossing and copying work again without pairing anew.",
     "flow-hold-ctrl": "Flow cross-only-with-Ctrl on, X11: pushing at the edge without Ctrl stays; with either Ctrl it crosses; letting Ctrl go mid-push stays. Wayland, where Ctrl cannot be read: it never crosses by the edge; the Flow action still works. Setting off: crossing as before.",
     "keyboard-ring-key": "Actions Ring on a free programmable keyboard key: tap opens the ring at the pointer and a bubble click runs; hold, point, release runs; tap, tap closes; turning the keyboard off while held closes the ring; the mouse ring button still works; a ring key in an app profile works only in that app.",
-    "fn-lock-notices": "Fn-lock notices on: each Fn-lock change the keyboard reports shows one notice with the new state; off shows nothing."
+    "fn-lock-notices": "Fn-lock notices on: each Fn-lock change the keyboard reports shows one notice with the new state; off shows nothing.",
+    "keyboard-key-positions": "Keys page with the real keyboard: each top-row key's line and hotspot sit on the F-key that carries it; Tab, Caps Lock, Shift, Ctrl, Alt and the navigation keys sit on their own keys; a Mini is drawn with the compact layout; keys without a known place are listed under Other keys with no line."
   },
   "groups": [
     {
@@ -315,6 +316,15 @@
       ],
       "require": [
         "fn-lock-notices"
+      ]
+    },
+    {
+      "id": "keyboard-picture",
+      "present": [
+        "mxoptions/ui/keyboard_drawing.py:^def slots\\("
+      ],
+      "require": [
+        "keyboard-key-positions"
       ]
     }
   ]
