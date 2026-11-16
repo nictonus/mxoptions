@@ -138,6 +138,13 @@ STRINGS = {
     "Easy-Switch 2": "Easy-Switch 2",
     "Easy-Switch 3": "Easy-Switch 3",
     "Move to the other computer (Flow)": "Перейти на інший комп'ютер (Flow)",
+    "Mouse and keyboard to Easy-Switch 1": "Миша й клавіатура на Easy-Switch 1",
+    "Mouse and keyboard to Easy-Switch 2": "Миша й клавіатура на Easy-Switch 2",
+    "Mouse and keyboard to Easy-Switch 3": "Миша й клавіатура на Easy-Switch 3",
+    "Mouse and keyboard together: on/off": "Миша й клавіатура разом: увімк./вимк.",
+    "Mouse and keyboard move together": "Миша й клавіатура переходять разом",
+    "Mouse and keyboard move on their own": "Миша й клавіатура переходять окремо",
+    "Mouse and keyboard move together once Flow is on": "Миша й клавіатура переходитимуть разом, коли Flow увімкнено",
 
     # point & scroll
     "Pointer speed and how the wheels behave.": "Швидкість вказівника та поведінка коліс.",

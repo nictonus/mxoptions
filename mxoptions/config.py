@@ -266,7 +266,7 @@ RING_STYLES = ("bubbles", "pie", "grid")
 MAX_SAVED_RINGS = 16
 # What a key of the keyboard can do: everything but what only makes sense on the mouse (its wheel, its pointer
 # speed, gestures, Flow). Easy-Switch from a key moves the keyboard; the Actions Ring opens at the pointer.
-KEYBOARD_ACTIONS = ("none", "keys", "button", "shortcut", "desktop", "command", "script", "macro", "host", "hook", "ring")
+KEYBOARD_ACTIONS = ("none", "keys", "button", "shortcut", "desktop", "command", "script", "macro", "host", "hook", "ring", "together")
 MAX_KEYBOARD_KEYS = 128
 KEY_ID = re.compile(r"0x[0-9a-f]{4}\Z")  # how the keys of the keyboard are named in the settings: key_id(control id)
 MAX_COMBO = 16          # key names in one combination
@@ -541,7 +541,10 @@ def keyboard_action(action):
                 and all(macro_step(step) for step in steps))
     if kind == "host":
         host = action.get("host")
-        return type(host) is int and 0 <= host <= 15
+        return (type(host) is int and 0 <= host <= 15 and set(action) <= {"type", "host", "both"}
+                and action.get("both", True) is True)  # "both": the mouse and the keyboard go
+    if kind == "together":
+        return action == {"type": "together"}
     if kind == "hook":
         return _text(action.get("name"))
     if kind == "ring":

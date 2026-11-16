@@ -27,7 +27,7 @@ def _child(result_path):
     from mxoptions import api, app, device, flow_service, front
     from mxoptions.ui import main_window, ring, sounds, tray_icon
 
-    seen = {"errors": [], "icons": [], "messages": [], "tooltip": None, "finished": False, "status": None}
+    seen = {"errors": [], "icons": [], "messages": [], "tooltip": None, "finished": False, "status": None, "flow": []}
     step = {"name": "start"}
     drawn = {}  # the last icon tray_icon.icon made, and what it shows
 
@@ -136,8 +136,14 @@ def _child(result_path):
             pass
 
     class Side:
+        together = False
+
         def __init__(self, *_args):
             pass
+
+        def toggle_together(self):
+            self.together = not self.together
+            return self.together
 
         def want(self, _who, _on):
             pass
@@ -145,8 +151,8 @@ def _child(result_path):
         def close(self):
             pass
 
-        def on_engine(self, _payload):
-            pass
+        def on_engine(self, payload):
+            seen["flow"].append(list(payload))
 
     def no_announce():
         raise AssertionError("the tray icons were announced on a bus")
@@ -171,6 +177,9 @@ def _child(result_path):
         ("battery style", "battery"),
         ("charged, fn notice", mouse(60, keyboard(60, fn))),
         ("both low", mouse(12, keyboard(9, fn))),
+        ("together", ("flow", ("together", None))),  # the action, from the engine
+        ("together again", ("flow", ("together", None))),
+        ("flow asked", ("flow", ("asked", None))),
     ]
 
     def scenario():
@@ -179,6 +188,8 @@ def _child(result_path):
                 step["name"] = name
                 if isinstance(what, str):
                     made["store"].set("app", "tray_icon", what)
+                elif isinstance(what, tuple):
+                    made["listener"].on_event(*what)
                 else:
                     made["listener"].on_state(what)
             seen["finished"] = True
@@ -274,7 +285,12 @@ class Tray(unittest.TestCase):
             ["keyboard notice and low", KEYBOARD_LOW.format(10), "warning"],
             ["charged, fn notice", "Fn lock on: the top row gives F1–F12", "info"],
             ["both low", KEYBOARD_LOW.format(9) + "\n" + MOUSE_LOW.format(12), "warning"],
+            ["together", "Mouse and keyboard move together once Flow is on", "info"],  # Flow is off in the settings
+            ["together again", "Mouse and keyboard move on their own", "info"],
         ], self.output)
+
+    def test_the_together_action_flips_the_follow_settings_and_other_flow_events_go_to_flow(self):
+        self.assertEqual(self.result()["flow"], [["asked", None]], self.output)
 
     def test_the_tooltip_tells_both_devices(self):
         self.assertEqual(self.result()["tooltip"], "Synthetic mouse — 12%\nSynthetic keyboard — 9%", self.output)

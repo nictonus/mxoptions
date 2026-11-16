@@ -290,6 +290,15 @@ class FlowService(QObject):
 
     # -- settings ---------------------------------------------------------------------
 
+    def toggle_together(self):
+        """The action "together": the mouse following the keyboard and the keyboard the mouse, both on unless both
+        are on already, then both off. Returns whether they are on now."""
+        cfg = self.store.cfg["flow"]
+        on = not (cfg["mouse_follows_keyboard"] and cfg["keyboard_follows_mouse"])
+        self.store.set("flow", "mouse_follows_keyboard", on)
+        self.store.set("flow", "keyboard_follows_mouse", on)
+        return on
+
     def _on(self):
         return bool(self._applied and self._applied[0])
 

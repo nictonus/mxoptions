@@ -962,10 +962,19 @@ class Engine:
             self._play(waveform)
 
     def _device_action(self, action, phase):
+        kind = action.get("type")
+        if kind == "together":  # the Flow service, on the GUI thread, flips the two settings
+            if phase != "release":
+                self._cue(device.WAVE_STATE)  # felt where the mouse is here
+                self._emit("flow", ("together", None))
+            return
+        if kind == "host" and action.get("both") is True:  # the keyboard goes too, with or without the mouse here
+            if phase != "release":
+                self._switch_host(action.get("host", 0), both=True)
+            return
         mouse = self.mouse
         if not mouse or not self.online:
             return
-        kind = action.get("type")
         try:
             if kind == "wheel_mode" and phase != "release" and mouse.smartshift:
                 wanted = action.get("mode", "toggle")  # the button toggles; other programs may ask for one mode
@@ -994,14 +1003,29 @@ class Engine:
         except HidppError as e:
             log.warning("%s failed: %s", kind, e)
 
-    def _switch_host(self, host):
+    def _switch_host(self, host, both=False):
+        """The mouse to channel ``host``; with ``both`` the keyboard after it (keyboard.KeyboardSide.go_along), or
+        the keyboard alone where no mouse is here. Both or neither: where the keyboard is here and cannot go, the
+        mouse stays too, and the log says why."""
         mouse = self.mouse
-        if not mouse or not self.online or not 0 <= host < mouse.host_count or host == self._hosts[0]:
-            return
-        try:
-            mouse.change_host(host)
-        except HidppError as e:
-            log.warning("host switch failed: %s", e)
+        here = mouse is not None and self.online
+        along = False
+        if both:
+            why = self.keyboard.go_along_refusal(host)
+            if why not in (None, "not-here"):
+                log.info("the mouse and keyboard stay (%s)", why)
+                return
+            along = why is None
+        if here:
+            if not 0 <= host < mouse.host_count or host == self._hosts[0]:
+                return
+            try:
+                mouse.change_host(host)
+            except HidppError as e:
+                log.warning("host switch failed: %s", e)
+                return
+        if along:
+            self.keyboard.go_along(host, mouse_sent=here)
 
     def _moved_lately(self):
         """Whether the mouse itself was in use a moment ago; True as well where that cannot be known."""

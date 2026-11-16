@@ -146,6 +146,13 @@ def notice_message(notice):
     return ", ".join((_("{key} on") if on else _("{key} off")).format(key=LOCK_TITLES[name]) for name, on in keys.items())
 
 
+def together_message(on, flow_on):
+    """What the tray says once the action "together" switched the two follow settings ``on`` or off."""
+    if not on:
+        return _("Mouse and keyboard move on their own")
+    return _("Mouse and keyboard move together") if flow_on else _("Mouse and keyboard move together once Flow is on")
+
+
 def tray_messages(armed, seen, found):
     """What the tray says of one state of the keyboard (``found``, or None): (armed, seen, [(text, "info" or
     "warning")]), the newest notice first and a low battery last, so that a notice never takes the warning's place.
@@ -281,6 +288,11 @@ def main(argv=None):
             mode, quiet = payload
             if not quiet and store.cfg["wheel_click"]["mode"] in ("sound", "both"):
                 sounds.play(mode)
+        elif kind == "flow" and payload[0] == "together":
+            on = store.flow.toggle_together()
+            if tray.isVisible():
+                tray.showMessage(APP_NAME, together_message(on, store.cfg["flow"]["enabled"]),
+                                 QSystemTrayIcon.MessageIcon.Information)
         elif kind == "flow":
             store.flow.on_engine(payload)
         service.api.on_event(kind, payload)

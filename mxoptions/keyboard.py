@@ -322,6 +322,7 @@ class KeyboardSide:
         #                         | ("follow", n, event, deadline): see follow()
         self._following = False  # the task under way is the keyboard following the mouse; _called_off is its event
         self._follow_wait = None  # (host, link, event, settle_by, deadline) of one waiting for the mouse to be gone
+        self._go_along = None   # the event of the follow an action asked for (go_along): Flow going off leaves it be
         self._reading = threading.Event()  # the keyboard's thread is seeing whether a key is down (see reading_keys)
         self._failed = None     # "switch": the keyboard could not be moved to another computer last time
         self._leaving = 0.0     # time.monotonic until which the keyboard is on its way to another computer
@@ -541,35 +542,54 @@ class KeyboardSide:
 
     # -- the keyboard following the mouse ----------------------------------------
 
-    def follow(self, host, link, event):
+    def follow(self, host, link, event, asked=False, wait=True):
         """Flow: the mouse has just been sent to the computer that has this keyboard (``link``, see flow_link) on
         channel ``host``. Send the keyboard after it, once, if all is as it should be; otherwise it stays, and the
-        log says why. ``event`` (a threading.Event) set calls it off, up to the moment the request goes."""
-        dev, now = self.device, time.monotonic()
-        current, hosts = self._hosts
-        if event.is_set():
-            why = "cancelled"
-        elif not self.engine.cfg["flow"]["keyboard_follows_mouse"]:
-            why = "off"
-        elif dev is None or not self.online or link is None or self.link != link:
-            why = "not-here"
-        elif self._busy(now):
-            why = "busy"
-        elif not (dev.pairing_read is True and len(hosts) == dev.host_count and 0 <= current < dev.host_count
-                  and 0 <= host < dev.host_count and host != current and hosts[host]["paired"] is True):
-            why = "pairing"  # only to a channel the keyboard itself said is paired
-        elif not self.transport.can_tell_keys():
-            why = "unsupported"  # it could not be told whether a key is down there
-        else:
-            why = None
+        log says why. ``event`` (a threading.Event) set calls it off, up to the moment the request goes.
+        ``asked``: an action asked for it (go_along), whatever Flow says; ``wait``: for a mouse on Bluetooth to be gone."""
+        why = self._follow_refusal(host, link, event, asked)
         if why:
             _stays(why)
             return
+        if asked:
+            self._go_along = event
+        now = time.monotonic()
         deadline = now + FOLLOW_BUDGET
-        if self._mouse_on_its_way():
+        if wait and self._mouse_on_its_way():
             self._follow_wait = (host, link, event, now + FOLLOW_SETTLE, deadline)
         else:
             self._want(("follow", host, event, deadline))
+
+    def _follow_refusal(self, host, link, event, asked):
+        """Why the keyboard would not follow the mouse to ``host`` now (see follow), or None."""
+        dev = self.device
+        current, hosts = self._hosts
+        if event is not None and event.is_set():
+            return "cancelled"
+        if not asked and not self.engine.cfg["flow"]["keyboard_follows_mouse"]:
+            return "off"
+        if dev is None or not self.online or (link is None and not asked) or self.link != link:
+            return "not-here"
+        if self._busy(time.monotonic()):
+            return "busy"
+        if not (dev.pairing_read is True and len(hosts) == dev.host_count and 0 <= current < dev.host_count
+                and 0 <= host < dev.host_count and host != current and hosts[host]["paired"] is True):
+            return "pairing"  # only to a channel the keyboard itself said is paired
+        if not self.transport.can_tell_keys():
+            return "unsupported"  # it could not be told whether a key is down there
+        if asked and (self._pressed or self._held):
+            return "held"  # a key this program follows is down
+        return None
+
+    def go_along_refusal(self, host):
+        """Why the keyboard would not go along with the mouse to ``host`` (go_along) now, or None; "not-here" when
+        there is no keyboard to go."""
+        return self._follow_refusal(host, self.link, None, True)
+
+    def go_along(self, host, mouse_sent=True):
+        """An action has just sent the mouse to channel ``host`` (or would have, ``mouse_sent`` False: no mouse is
+        here): the keyboard follows it as over Flow (follow), with or without Flow."""
+        self.follow(host, self.link, threading.Event(), asked=True, wait=mouse_sent)
 
     def _busy(self, now):
         return (self._follow_wait is not None or isinstance(self._wish, tuple) or now < self._leaving
@@ -606,8 +626,8 @@ class KeyboardSide:
     def follow_cancel(self, event):
         """Call off the keyboard following the mouse that ``event`` belongs to (None: any). One whose request has
         gone already is not called back."""
-        def ours(other):
-            return event is None or other is event
+        def ours(other):  # None: any but the one an action asked for
+            return other is event if event is not None else other is not self._go_along
         wish = self._wish
         if self._follow_wait is not None and ours(self._follow_wait[2]):
             self._follow_wait[2].set()
@@ -997,7 +1017,11 @@ class KeyboardSide:
     def device_action(self, action, phase):
         """Easy-Switch from a key moves the keyboard; nothing else a key does is the keyboard's business."""
         dev = self.device
-        if action.get("type") != "host" or phase == "release" or dev is None or not self.online:
+        if action.get("type") == "together" and phase != "release":
+            self.engine._emit("flow", ("together", None))  # see engine._device_action
+            return
+        if (action.get("type") != "host" or action.get("both") is True  # that one goes on the key's release: _on_keys
+                or phase == "release" or dev is None or not self.online):
             return
         host = action.get("host", 0)
         if not 0 <= host < dev.host_count or host == self._hosts[0]:
@@ -1075,6 +1099,7 @@ class KeyboardSide:
         """What the following still asks of the keyboard is ordinary from now on: calling it off no longer stops it."""
         self._called_off = threading.Event()
         self._following = False
+        self._go_along = None
 
     def _stay(self, why):
         """A task: the keyboard does not follow the mouse (``why``); its keys are taken again."""
@@ -1085,6 +1110,7 @@ class KeyboardSide:
     def _on_keys(self, pressed):
         keys = self._effective()
         failed = None  # the first error of this report: raised once every key of it was handled
+        along = None   # the channel a key let go of sends the mouse and the keyboard to, once the report is handled
         for cid in sorted(pressed - self._pressed):
             self._pressed = self._pressed | {cid}  # done once, even when it fails: never done again by a later report
             action = keys.get(config.key_id(cid)) if cid in self._active else None
@@ -1108,6 +1134,9 @@ class KeyboardSide:
             action = self._held.pop(cid, None)
             if action:
                 log.info("key %s up", config.key_id(cid))
+                if action.get("type") == "host" and action.get("both") is True:
+                    along = action.get("host", 0)
+                    continue
                 try:
                     if action.get("type") == "ring":
                         self.engine._ring_event(("keyboard", cid), "up")
@@ -1117,6 +1146,12 @@ class KeyboardSide:
                     if failed is None:
                         failed = err
         self._pressed = pressed
+        if along is not None:
+            try:
+                self.engine._switch_host(along, both=True)  # every key of the report let go of first: see go_along_refusal
+            except Exception as err:
+                if failed is None:
+                    failed = err
         if self._pending and not (pressed or self._held) and self._task is None:
             try:
                 self._next_task()  # a change of a setting waited for the key to be let go
@@ -1411,6 +1446,7 @@ class KeyboardSide:
         if self._follow_wait is not None:
             self._follow_wait = None
             _stays("not-here")
+        self._go_along = None
         self._identity = None
         self._active.clear()
         self._pressed.clear()

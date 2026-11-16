@@ -78,6 +78,7 @@
     "keyboard-follow-held-key-check": "Keyboard follows the mouse over Flow: with no key held it follows; holding Shift, a letter key, or a media key not set to an app action, it stays; each direction and connection noted.",
     "keyboard-follow-held-key-at-switch": "Hold a key physically during an Easy-Switch: note what the old and the new computer see.",
     "keyboard-follow-two-computers": "Two Linux computers paired over Flow: the keyboard follows the mouse both ways, keys given back before the switch, no dead keys, 40 crossings in one session.",
+    "together-actions": "Mouse and keyboard to Easy-Switch N from a mouse button, a keyboard key and the Actions Ring: both arrive at computer N; with a key held both stay; the on/off action flips both Flow follow switches and the tray says so.",
     "app-profiles-desktops": "Keyboard app profiles change keys for the app in front on KDE Wayland, X11, sway and Hyprland; GNOME shows the not-available message.",
     "fn-lock-setting": "Toggle the Fn lock switch: the top row flips. The keyboard's own Fn-lock shortcut: the switch follows within a second. Easy-Switch away and back: setting kept per channel as the keyboard keeps it. Power cycle: kept. Toggle while holding F5 with the mouse, then release: no stuck key.",
     "disable-keys-setting": "Disable and enable each advertised key; rapid changes preserve both choices. Check power cycle, a native modifier held during change, and a remapped key. Restore earlier disable setting first, then press and release any stuck modifier on original computer.",
@@ -142,6 +143,15 @@
         "keyboard-follow-held-key-check",
         "keyboard-follow-held-key-at-switch",
         "keyboard-follow-two-computers"
+      ]
+    },
+    {
+      "id": "together-actions",
+      "present": [
+        "mxoptions/actions.py:\"both_1\""
+      ],
+      "require": [
+        "together-actions"
       ]
     },
     {
