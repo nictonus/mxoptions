@@ -27,7 +27,8 @@ from PySide6.QtWidgets import QApplication, QScrollArea  # noqa: E402
 
 from mxoptions import config, i18n  # noqa: E402
 
-PAGES = ("buttons", "gestures", "scroll", "haptics", "ring", "flow", "device")  # in the order of the sidebar
+PAGES = ("buttons", "gestures", "scroll", "haptics", "ring", "flow", "device")  # in the order of the window's stack
+KEYBOARD_PAGES = ("keyboard-keys", "keyboard-backlight", "keyboard-easy-switch", "keyboard-settings")  # its tabs
 STATE = {
     "connected": True, "known": True, "name": "MX Master 4", "uinput": True, "battery": (82, 0), "current_host": 0,
     "wheel_mode": "ratchet", "dpi": 1000,
@@ -148,7 +149,11 @@ def main():
         window.grab().save(os.path.join(args.out, f"{name}.png"))
 
     os.makedirs(args.out, exist_ok=True)
-    for index, name in enumerate(PAGES + (("keyboard-keys", "keyboard") if args.keyboard else ())):
+    # each picture by the stack index of its page (the sidebar shows them in another order)
+    shots = list(enumerate(PAGES))
+    if args.keyboard:
+        shots += zip(window._keyboard_pages, KEYBOARD_PAGES)
+    for index, name in shots:
         window.stack.setCurrentIndex(index)
         window._nav.button(index).setChecked(True)
         page = window.stack.widget(index)

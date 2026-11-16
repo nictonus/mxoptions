@@ -149,10 +149,8 @@ QToolTip {{ background: {CARD}; color: {TEXT}; border: 1px solid {BORDER}; paddi
 #deviceStatus {{ color: {MUTED}; font-size: 9.5pt; }}
 #deviceKind {{ color: {MUTED}; font-size: 8pt; font-weight: 600; letter-spacing: 1px; }}
 #heroName {{ font-size: 15pt; font-weight: 600; }}
-#channel {{ background: {BG}; border: 1px solid {BORDER}; border-radius: 12px; }}
-#channelCurrent {{ background: {CARD_HOVER}; border: 2px solid {ACCENT_INK}; border-radius: 12px; }}
-#channelNumber {{ background: {CARD_HOVER}; border-radius: 13px; color: {MUTED}; font-weight: 700; }}
-#channelNumberCurrent {{ background: {ACCENT}; border-radius: 13px; color: {ACCENT_TEXT}; font-weight: 700; }}
+#channelNumber {{ background: transparent; border: 2px solid {MUTED}; border-radius: 6px; color: {TEXT}; font-weight: 700; }}
+#channelNumberCurrent {{ background: {ACCENT}; border-radius: 6px; color: {ACCENT_TEXT}; font-weight: 700; }}
 #channelName {{ font-weight: 600; }}
 #keyGroup {{ color: {MUTED}; font-size: 8.5pt; font-weight: 600; letter-spacing: 1px; }}
 #navButton {{

@@ -3,8 +3,8 @@
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
-    QAbstractButton, QComboBox, QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout,
-    QWidget,
+    QAbstractButton, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea,
+    QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from .. import APP_NAME, actions, config, device, firmware, keyboard
@@ -12,10 +12,14 @@ from ..i18n import _
 from . import icons, keyboard_drawing, theme
 from .action_picker import ActionPicker
 from .pages import FirmwareQuery, ScrollPage, _header
-from .widgets import BatteryIcon, Card, Row, Segmented, SliderRow, Switch, hint_label, ui_scale
+from .widgets import (
+    BatteryIcon, Card, ElidedLabel, InfoButton, Row, Segmented, SliderRow, Switch, hint_label, titled, ui_scale,
+)
 
 # What a key may not do: what only makes sense on the mouse (catalogue ids, see config.KEYBOARD_ACTIONS)
 KEYBOARD_EXCLUDE = ("gestures", "wheel_mode", "dpi_cycle", "dpi_shift", "flow", "spotlight")
+# The keyboard's tabs after Keys, as Options+ has them (KeyboardPage.sections)
+SECTION_TITLES = {"backlight": "Backlighting", "easy_switch": "Easy-Switch", "settings": "Settings"}
 # Headings of the action list for a key, where the catalogue's speak of the mouse (actions.CATEGORIES)
 KEYBOARD_TITLES = {"mouse": "General"}
 # Names for the keys whose control ids are known (Solaar's list of them): every other key goes by its id.
@@ -769,46 +773,193 @@ class KeysPage(QWidget):
 
 
 class ChannelTile(QFrame):
-    """One Easy-Switch channel: its number, the computer on it, and whether that is this one. Only shown: the
-    keyboard's own Easy-Switch keys move it between channels."""
+    """One Easy-Switch channel, as Options+ lists them: its number in a box (filled for this computer's), the
+    computer on it and, under that, whether it is this one. Only shown: the keyboard's own Easy-Switch keys move it
+    between channels."""
 
     def __init__(self, index, host, current, parent=None):
         super().__init__(parent)
-        self.setObjectName("channelCurrent" if current else "channel")
-        self.setMinimumHeight(58)
+        self.setObjectName("channelRow")
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
-        layout.setSpacing(12)
+        layout.setContentsMargins(4, 6, 4, 6)
+        layout.setSpacing(14)
         number = QLabel(str(index + 1))
         number.setObjectName("channelNumberCurrent" if current else "channelNumber")
-        number.setFixedSize(26, 26)
+        number.setFixedSize(34, 28)
         number.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(number)
         text = QVBoxLayout()
         text.setSpacing(0)
-        self.name = QLabel(host["name"] or (_("Paired") if host["paired"] else _("Empty")))
+        self.name = ElidedLabel(host["name"] or (_("Paired") if host["paired"] else _("Empty")))  # long: shortened
         self.name.setObjectName("channelName" if host["name"] or current else "rowHint")
+        self.name.setMinimumWidth(1)
         text.addWidget(self.name)
         if current:
             caption = QLabel(_("This computer"))
             caption.setObjectName("rowHint")
             text.addWidget(caption)
         layout.addLayout(text, 1)
-        self.setAccessibleName(_("Channel {}: {}").format(index + 1, self.name.text())
+        self.setAccessibleName(_("Channel {}: {}").format(index + 1, self.name.full_text())
                                + (" · " + _("This computer") if current else ""))
 
 
-class KeyboardPage(ScrollPage):
-    def __init__(self, store, parent=None):
-        super().__init__(_("Keyboard"), None, parent)
-        self.store = store
-        self.notice = QLabel()
-        self.notice.setObjectName("banner")
-        self.notice.setWordWrap(True)
-        self.notice.hide()
-        self.body.addWidget(self.notice)
+class KeyboardPicture(QWidget):
+    """The keyboard drawn as on the Keys page, as a picture only: lit while its backlight is on (Backlighting), or
+    with some keys outlined and one picked (Easy-Switch: its Easy-Switch keys, this computer's)."""
 
-        card = Card()  # which keyboard, and how it is: its name, battery and firmware at a glance
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._keys, self._name, self._marked, self._current, self._lit, self._opacity = [], None, (), None, None, 1.0
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    def set_keyboard(self, keys, name):
+        if (keys, name) != (self._keys, self._name):
+            self._keys, self._name = list(keys), name
+            self.updateGeometry()
+            self.update()
+
+    def set_lit(self, on):
+        if on != self._lit:
+            self._lit = on
+            self.update()
+
+    def set_marked(self, ids, current=None):
+        self._marked, self._current = tuple(ids), current
+        self.update()
+
+    def set_opacity(self, opacity):
+        self._opacity = opacity
+        self.update()
+
+    def layout_name(self):
+        return keyboard_drawing.layout_for(self._name)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        unit = min(width / (keyboard_drawing.LAYOUTS[self.layout_name()] + 0.8), keyboard_drawing.MAX_UNIT)
+        return int(unit * (keyboard_drawing.ROWS + 0.8))
+
+    def sizeHint(self):
+        return QSize(640, self.heightForWidth(640))
+
+    def minimumSizeHint(self):
+        return QSize(240, self.heightForWidth(240))
+
+    def slots(self):
+        """Key id -> slot, for the keys marked."""
+        slot_of = keyboard_drawing.slots(self._keys, self.layout_name(), self._name)
+        return {key_id: slot for key_id, slot in slot_of.items() if key_id in self._marked}
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setOpacity(self._opacity)
+        keyboard_drawing.paint(painter, QRectF(self.rect()), self.layout_name(), self.slots(), self._current,
+                               lit=self._lit)
+
+
+class Section(ScrollPage):
+    """One of the keyboard's tabs in the sidebar (SECTION_TITLES): a page of cards that scrolls."""
+
+    shown = Signal()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.shown.emit()
+
+
+class KeyboardPage(QWidget):
+    """The keyboard's settings, in the tabs Options+ has after Keys: Backlighting, Easy-Switch and Settings. This
+    widget owns every control and follows the state; its three Section pages (``sections``) are what is shown — the
+    main window places them in its stack, and on its own this widget shows them one under another."""
+
+    open_flow = Signal()  # "Flow settings" was clicked
+
+    def __init__(self, store, parent=None):
+        super().__init__(parent)
+        self.store = store
+        self.sections = {name: Section(_(title)) for name, title in SECTION_TITLES.items()}
+        own = QVBoxLayout(self)
+        own.setContentsMargins(0, 0, 0, 0)
+        for section in self.sections.values():
+            own.addWidget(section)
+        self._notices = []  # the banner of each section: why the keys are left as they are
+        for section in self.sections.values():
+            label = QLabel()
+            label.setObjectName("banner")
+            label.setWordWrap(True)
+            label.hide()
+            section.body.addWidget(label)
+            self._notices.append(label)
+        self.notice = self._notices[0]
+        backlight, easy, settings = (self.sections[name].body for name in SECTION_TITLES)
+
+        # Backlighting: the keyboard, lit while its backlight is on, and the backlight's settings
+        self.backlight_picture = KeyboardPicture()
+        backlight.addWidget(self.backlight_picture)
+        self.backlight_card = Card(_("Backlight"), hint=_(BACKLIGHT_HINT))
+        backlight.addWidget(self.backlight_card)
+        self.no_backlight = hint_label(_("This keyboard has no backlight settings."))
+        backlight.addWidget(self.no_backlight)
+
+        # Easy-Switch: as Options+ shows it, a card listing the channels over the keyboard, its Easy-Switch keys marked
+        stage = QWidget()
+        grid = QGridLayout(stage)
+        grid.setContentsMargins(0, 0, 0, 0)
+        self.easy_picture = KeyboardPicture()
+        self.easy_picture.set_opacity(0.45)
+        grid.addWidget(self.easy_picture, 0, 0)
+        card = QFrame()
+        card.setObjectName("popup")
+        card.setMaximumWidth(440)
+        pop = QVBoxLayout(card)
+        pop.setContentsMargins(22, 18, 22, 16)
+        pop.setSpacing(4)
+        title = QLabel(_("Easy-Switch"))
+        title.setObjectName("cardTitle")
+        pop.addLayout(titled(title, InfoButton(_(
+            "Press an Easy-Switch key to move the keyboard to the computer on that channel. Hold one for three seconds "
+            "to pair the keyboard with another computer on it."))))
+        pop.addWidget(hint_label(_("Press the Easy-Switch keys to switch between the paired computers.")))
+        pop.addSpacing(8)
+        self.hosts = QWidget()
+        self.hosts_layout = QVBoxLayout(self.hosts)
+        self.hosts_layout.setContentsMargins(0, 0, 0, 0)
+        self.hosts_layout.setSpacing(2)
+        pop.addWidget(self.hosts)
+        grid.addWidget(card, 0, 0, Qt.AlignmentFlag.AlignCenter)
+        self.hosts_card = card
+        self._hosts_shown = None
+        easy.addWidget(stage)
+        self.easy_stage = stage
+
+        # Flow: the keyboard's part of it, here where computers are switched; the rest on the Flow page
+        card = Card(_("Flow"))
+        self.mouse_follows = Switch()
+        self.mouse_follows.setAccessibleName(_("Mouse follows the keyboard"))
+        self.mouse_follows.toggled.connect(lambda on: self.store.set("flow", "mouse_follows_keyboard", on))
+        card.add(Row(_("Mouse follows the keyboard"), _(
+            "Switch the keyboard to one of these computers with its Easy-Switch key, and the mouse goes along. "
+            "Only between computers running MX Options; this is not Logitech's Easy-Switch of Options+."),
+            self.mouse_follows))
+        self.keyboard_follows = Switch()
+        self.keyboard_follows.setAccessibleName(_("Keyboard follows the mouse"))
+        self.keyboard_follows.toggled.connect(lambda on: self.store.set("flow", "keyboard_follows_mouse", on))
+        card.add(Row(_("Keyboard follows the mouse"), _(
+            "Send the mouse to one of these computers and the keyboard goes along, when no key is held. Works "
+            "from Linux with a Bluetooth keyboard; not yet tried with a real keyboard. Windows can receive the "
+            "keyboard but cannot send it on; use the keyboard's Easy-Switch key there."), self.keyboard_follows))
+        flow = QPushButton(_("Flow settings"))
+        flow.setObjectName("flat")
+        flow.setCursor(Qt.CursorShape.PointingHandCursor)
+        flow.clicked.connect(self.open_flow)
+        card.add_plain(flow)
+        self.flow_card = card
+        easy.addWidget(card)
+
+        # Settings: which keyboard, typing, firmware and reset
+        card = Card()  # which keyboard, and how it is: its name and battery at a glance
         self.name = QLabel()
         self.name.setObjectName("heroName")
         card.add_plain(self.name)
@@ -822,22 +973,8 @@ class KeyboardPage(ScrollPage):
         self.battery.setObjectName("deviceStatus")
         line.addWidget(self.battery, 1)
         card.add_plain(status)
-        self.body.addWidget(card)
+        settings.addWidget(card)
 
-        card = Card(_("Easy-Switch"), hint=_(
-            "Press an Easy-Switch key to move the keyboard to the computer on that channel. Hold one for three seconds "
-            "to pair the keyboard with another computer on it."))
-        self.hosts = QWidget()
-        self.hosts_layout = QHBoxLayout(self.hosts)
-        self.hosts_layout.setContentsMargins(0, 0, 0, 0)
-        self.hosts_layout.setSpacing(10)
-        card.add_plain(self.hosts)
-        self.hosts_card = card
-        self._hosts_shown = None
-        self.body.addWidget(card)
-
-        self.backlight_card = Card(_("Backlight"), hint=_(BACKLIGHT_HINT))
-        self.body.addWidget(self.backlight_card)
         card = Card(_("Typing"), hint=_(
             "Settings the keyboard controls itself. Changes are made on the keyboard. Its own shortcuts may change "
             "them too."))
@@ -876,7 +1013,7 @@ class KeyboardPage(ScrollPage):
                 self._add_backlight(self.backlight_card)
         self.settings_rows["platform"].title.setBuddy(self.platform_box)
         self.settings_card = card
-        self.body.addWidget(card)
+        settings.addWidget(card)
 
         card = Card(_("Firmware & reset"))
         self.firmware_row = card.add(Row(_("Firmware"), None, None, note=" "))
@@ -887,8 +1024,10 @@ class KeyboardPage(ScrollPage):
         reset.setCursor(Qt.CursorShape.PointingHandCursor)
         reset.clicked.connect(self._reset)
         card.add(Row(_("Every key does what it always does"), None, reset))
-        self.body.addWidget(card)
-        self.finish()
+        settings.addWidget(card)
+        for section in self.sections.values():
+            section.finish()
+        self.sections["settings"].shown.connect(self._settings_shown)
 
         store.state_changed.connect(self._state)
         store.changed.connect(self._show_notice_switches)
@@ -900,6 +1039,9 @@ class KeyboardPage(ScrollPage):
         self.notices.set_checked_silently(cfg.get("notices") is True)
         self.fn_notices.set_checked_silently(cfg.get("fn_notices") is True)
         self.lock_notices.set_checked_silently(cfg.get("lock_notices") is True)
+        flow = self.store.cfg["flow"]
+        self.mouse_follows.set_checked_silently(flow["mouse_follows_keyboard"])
+        self.keyboard_follows.set_checked_silently(flow["keyboard_follows_mouse"])
 
     def _add_backlight(self, card):
         """The rows under the Backlight row: brightness, its level, the timers, low battery, the notice."""
@@ -1093,7 +1235,7 @@ class KeyboardPage(ScrollPage):
     def _firmware_answered(self, entries, _checked):
         if (self.store.state.get("keyboard") or {}).get("name") == self._firmware_for:
             self._firmware_entries = entries
-        elif self.isVisible():  # an answer about the keyboard before: this one is asked about now
+        elif self._firmware_shown():  # an answer about the keyboard before: this one is asked about now
             self._ask_firmware()
         self._show_firmware()
 
@@ -1116,8 +1258,11 @@ class KeyboardPage(ScrollPage):
                      "publishes for Linux. MX Options does not flash anything itself.")
         self.firmware_row.note.setText(text)
 
-    def showEvent(self, event):
-        super().showEvent(event)
+    def _firmware_shown(self):
+        """Whether the firmware row is on screen: the Settings tab is (in the window, or with this page on its own)."""
+        return self.sections["settings"].isVisible()
+
+    def _settings_shown(self):
         if self._firmware_for != (self.store.state.get("keyboard") or {}).get("name"):
             self._ask_firmware()
 
@@ -1128,12 +1273,22 @@ class KeyboardPage(ScrollPage):
         found = state.get("keyboard") or {}
         connected = bool(found.get("connected"))
         notice = notice_text(found)
-        self.notice.setVisible(bool(notice))
-        self.notice.setText(notice)
+        for label in self._notices:
+            label.setVisible(bool(notice))
+            label.setText(notice)
         settings = found.get("settings") or []
         for name, row in self.settings_rows.items():
             self._row_visible(row, name in settings)
         self.backlight_card.setVisible("backlight" in settings)
+        self.no_backlight.setVisible("backlight" not in settings)
+        keys, name = found.get("keys") or [], found.get("name")
+        for picture in (self.backlight_picture, self.easy_picture):
+            picture.set_keyboard(keys, name)
+        value = (((found.get("controls") or {}) if connected else {}).get("backlight") or {}).get("value") or {}
+        self.backlight_picture.set_lit(bool(value.get("on")) if "on" in value else None)
+        current = found.get("current_host")
+        easy = [key["id"] for key in keys if key["cid"] in (0x00D1, 0x00D2, 0x00D3)]
+        self.easy_picture.set_marked(easy, config.key_id(0x00D1 + current) if isinstance(current, int) else None)
         self.settings_card.setVisible(any(name in SETTINGS and name != "backlight" for name in settings))
         controls = (found.get("controls") or {}) if connected else {}
         self._show_fn(controls.get("fn"))
@@ -1156,11 +1311,12 @@ class KeyboardPage(ScrollPage):
             while self.hosts_layout.count():
                 item = self.hosts_layout.takeAt(0)
                 if item.widget():
+                    item.widget().hide()
                     item.widget().deleteLater()
             for index, host in enumerate(hosts):
-                self.hosts_layout.addWidget(ChannelTile(index, host, index == found.get("current_host")), 1)
+                self.hosts_layout.addWidget(ChannelTile(index, host, index == found.get("current_host")))
         if found.get("name") != self._firmware_for:
             self._firmware_entries = []  # fwupd's answer about another keyboard
-        if self.isVisible() and connected and self._firmware_for != found.get("name"):
+        if self._firmware_shown() and connected and self._firmware_for != found.get("name"):
             self._ask_firmware()
         self._show_firmware()

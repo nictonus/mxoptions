@@ -148,10 +148,11 @@ def key_at(area, layout, slot_of, pos):
 
 
 def paint(painter, area, layout, slot_of, selected=None, hover=None, changed=frozenset(), kept=frozenset(),
-          icon_names=None):
+          icon_names=None, lit=None):
     """Draw the keyboard inside ``area``; ``slot_of`` as slots() gives it; ``changed`` the ids of keys set to
-    something of their own, ``kept`` of those left as they are; ``icon_names`` key id -> the icon on its cap. Returns
-    key id -> the rect of its cap."""
+    something of their own, ``kept`` of those left as they are; ``icon_names`` key id -> the icon on its cap; ``lit``
+    True or False: its backlight on (legends glow) or off (legends dim), None: not said. Returns key id -> the rect of
+    its cap."""
     rect, unit = fit(area, layout)
     of_slot = {slot: key_id for key_id, slot in slot_of.items()}
     icon_names = icon_names or {}
@@ -163,6 +164,7 @@ def paint(painter, area, layout, slot_of, selected=None, hover=None, changed=fro
     painter.drawRoundedRect(rect.adjusted(-rim, -rim, rim, rim), unit * 0.45, unit * 0.45)
     font = QFont(painter.font())
     font.setPixelSize(max(7, int(unit * 0.24)))
+    font.setStyleStrategy(QFont.StyleStrategy.NoSubpixelAntialias)  # small legends: no coloured fringes
     painter.setFont(font)
     rects = {}
     for slot, place, legend in board(layout):
@@ -171,7 +173,7 @@ def paint(painter, area, layout, slot_of, selected=None, hover=None, changed=fro
         listed, locked = key_id is not None, key_id in kept
         radius = unit * 0.12
         painter.setPen(Qt.PenStyle.NoPen)  # the cap
-        painter.setBrush(QColor(theme.MODEL_DECAL))
+        painter.setBrush(QColor(theme.mix(theme.MODEL_DECAL, theme.TEXT, 0.08) if lit else theme.MODEL_DECAL))
         painter.drawRoundedRect(cap, radius, radius)
         if listed:
             rects[key_id] = cap
@@ -189,9 +191,9 @@ def paint(painter, area, layout, slot_of, selected=None, hover=None, changed=fro
             painter.drawRoundedRect(cap.adjusted(-1, -1, 1, 1), radius + 1, radius + 1)
         icon = icon_names.get(key_id, "") if listed else ""
         legend = legend or EXTRA_LEGENDS.get(slot, "")
-        text_color = QColor(theme.TEXT if listed and not locked else theme.MUTED)
-        if not listed:
-            text_color.setAlpha(170)
+        text_color = QColor(theme.TEXT if listed and not locked or lit else theme.MUTED)
+        if not listed and not lit:
+            text_color.setAlpha(110 if lit is False else 170)
         inner = cap.adjusted(unit * 0.08, unit * 0.06, -unit * 0.08, -unit * 0.06)
         if icons.has(icon) and unit >= 18:
             size = int(unit * 0.34)

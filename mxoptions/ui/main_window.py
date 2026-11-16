@@ -68,11 +68,13 @@ class MainWindow(QMainWindow):
             (_("Point & scroll"), PointScrollPage(store), "input-touchpad"),
             (_("Haptics"), HapticsPage(store), "audio-volume-medium"),
             (_("Actions Ring"), RingPage(store), "view-grid"),
+            # for both devices, at the foot of the sidebar: Flow, and the app's own settings
             (_("Flow"), FlowPage(store), "network-connect"),
-            (_("Device & app"), DevicePage(store), "configure"),  # the app's own settings: at the foot of the sidebar
+            (_("Device & app"), DevicePage(store), "configure"),
         ]
+        foot = range(len(pages) - 2, len(pages))  # their buttons are made last, so that Tab reaches them last as well
         for index, (title, page, icon) in enumerate(pages):
-            if index < len(pages) - 1:  # the last one's button is made last, so that Tab reaches it last as well
+            if index not in foot:
                 side.addWidget(self._nav_button(title, index, icon))
             self.stack.addWidget(page)
         self._nav.button(0).setChecked(True)
@@ -95,8 +97,15 @@ class MainWindow(QMainWindow):
         status_line.addWidget(self.keyboard_status, 1)
         block.addLayout(status_line)
         block.addSpacing(14)
+        # its tabs, as Options+ has them: Keys, then the sections of the keyboard's own settings
+        self.keyboard_page = KeyboardPage(store, parent=self)  # owns them; never shown itself
+        self.keyboard_page.hide()
+        self.keyboard_page.open_flow.connect(lambda: self._open(foot[0]))  # the Flow page
+        sections = self.keyboard_page.sections
         for title, page, icon in ((_("Keys"), KeysPage(store), "input-keyboard"),
-                                  (_("Keyboard"), KeyboardPage(store), "preferences-desktop-keyboard")):
+                                  (_("Backlighting"), sections["backlight"], "keyboard-brightness"),
+                                  (_("Easy-Switch"), sections["easy_switch"], "computer"),
+                                  (_("Settings"), sections["settings"], "configure")):
             block.addWidget(self._nav_button(title, self.stack.count(), icon))
             self.stack.addWidget(page)
         self._keyboard_pages = range(len(pages), self.stack.count())
@@ -107,8 +116,8 @@ class MainWindow(QMainWindow):
         line.setObjectName("separator")
         side.addWidget(line)
         side.addSpacing(6)
-        settings = len(pages) - 1
-        side.addWidget(self._nav_button(pages[settings][0], settings, pages[settings][2]))
+        for index in foot:
+            side.addWidget(self._nav_button(pages[index][0], index, pages[index][2]))
         widest = max(self._nav.button(index).fontMetrics().horizontalAdvance(title)
                      for index, (title, _page, _icon) in enumerate(pages))
         with_icons = any(not button.icon().isNull() for button in self._nav.buttons())
@@ -213,6 +222,11 @@ class MainWindow(QMainWindow):
                 if state["known"] else
                 _("Looking for your mouse… Turn it on and make sure its receiver is plugged in.")
             )
+
+    def _open(self, index):
+        """Show page ``index`` of the stack, its sidebar button checked."""
+        self._nav.button(index).setChecked(True)
+        self.stack.setCurrentIndex(index)
 
     def _edit_button(self, key):
         """Open the Buttons page on one button."""

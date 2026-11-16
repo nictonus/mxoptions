@@ -940,7 +940,10 @@ class FirmwareQuery(QObject):
         def job():
             entries = firmware.check(name) if check else firmware.installed(name)
             self.running = False
-            self.answered.emit(entries, check)
+            try:
+                self.answered.emit(entries, check)
+            except RuntimeError:  # the page that asked was closed meanwhile: nobody is left to tell
+                pass
 
         threading.Thread(target=job, name="firmware", daemon=True).start()
 

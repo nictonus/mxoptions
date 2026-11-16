@@ -883,6 +883,12 @@ STRINGS = {
     "Language switch": "Зміна мови",
     "AI prompt": "Запит до ШІ",
     "Other keys": "Інші клавіші",
+    "Backlighting": "Підсвічування",
+    "Settings": "Налаштування",
+    "Flow settings": "Налаштування Flow",
+    "This keyboard has no backlight settings.": "Ця клавіатура не має налаштувань підсвітки.",
+    "Press the Easy-Switch keys to switch between the paired computers.":
+        "Натискайте клавіші Easy-Switch, щоб перемикатися між з'єднаними комп'ютерами.",
     "Grave accent": "Гравіс",
     "Tab": "Tab",
     "Caps Lock": "Caps Lock",
