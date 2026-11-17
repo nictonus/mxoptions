@@ -416,6 +416,7 @@ class KeyDescriptors(unittest.TestCase):
         nkro = report(1, MODS, page(0x07) + umin(0) + umax(119) + lmin(0) + lmax(1) + size(1) + count(120) + inp(DATA_VAR))
         keys_from_four = report(1, MODS, PAD, page(0x07) + umin(4) + umax(0x65) + lmin(1) + lmax(0x62) + size(8)
                                 + count(6) + inp(DATA_ARRAY))
+        call_mute = page(0x01) + usage(0xE1) + lmin(0) + lmax(1) + size(1) + count(1) + inp(0x06) + size(15) + inp(CONST)
         consumer_from_zero = page(0x0C) + umin(0) + umax(0x29C) + lmin(0) + lmax(0x29C) + size(16) + count(1) + inp(DATA_ARRAY)
         cases = {
             "boot keyboard, no report ids": (BOOT, ((0, 8, KB_MASK),)),
@@ -428,6 +429,8 @@ class KeyDescriptors(unittest.TestCase):
             "modifiers and keys, two items": (report(1, MODS + KEYS), ((1, 8, (1 << 56) - 1),)),
             "consumer report, 0 is none": (report(1, MODS) + report(3, consumer_from_zero), ((1, 2, 0xFF), (3, 3, 0xFFFF))),
             "system keys": (report(1, MODS) + report(4, SYSTEM), ((1, 2, 0xFF), (4, 2, 0xFF))),
+            "call mute key, as on the MX Mechanical": (report(1, MODS) + report(0x0B, call_mute, application=(0x01, 0x13)),
+                                                       ((1, 2, 0xFF), (0x0B, 3, 0x0001))),
             "every kind, HID++ left out": (AGGREGATE, AGGREGATE_LAYOUT),
             "both HID++ reports left out": (report(1, MODS) + hidpp_report(0x10, 7, 0xFF00) + hidpp_report(0x11, 20, 0xFF00), ((1, 2, 0xFF),)),
             "a report of padding only": (report(1, MODS) + report(5, PAD), ((1, 2, 0xFF),)),
@@ -484,6 +487,7 @@ class KeyDescriptors(unittest.TestCase):
                 "pointer axes": report(1, MODS) + report(2, pointer, application=(0x01, 0x02)),
                 "buttons": report(1, MODS) + report(2, page(0x09) + umin(1) + umax(8) + lmin(0) + lmax(1) + size(1) + count(8) + inp(DATA_VAR)),
                 "system key without a usage": report(1, MODS) + report(4, page(0x01) + lmin(0) + lmax(1) + size(1) + count(8) + inp(DATA_VAR)),
+                "Generic Desktop beside call mute": report(1, MODS) + report(4, page(0x01) + usage(0xE0) + lmin(0) + lmax(1) + size(1) + count(8) + inp(DATA_VAR)),
                 "Generic Desktop past the system keys": report(1, MODS) + report(4, page(0x01) + umin(0xB0) + umax(0xB8) + lmin(1) + lmax(9) + size(8) + count(1) + inp(0)),
                 "HID++ id 0x12": report(1, MODS) + hidpp_report(0x12, 20),
                 "HID++ long report of 19 bytes": report(1, MODS) + hidpp_report(0x11, 19),

@@ -2053,6 +2053,19 @@ class SnapSwitch(unittest.TestCase):
                 self.assertEqual(self.ioctls.ids(), asked)
                 self.assertEqual(self.kb.switched, [1] if expected == "sent" else [])
 
+    def test_a_keyboard_slow_to_wake_is_woken_before_the_reads(self):
+        """Bluetooth: the first exchange after a while idle takes far longer than KEYS_FRESH, the next ones little."""
+        port = self.node.fake
+
+        def wait(_rid):
+            if not port.written:  # nothing asked of it yet: still idle
+                time.sleep(keyboard.KEYS_FRESH + 0.2)
+        self.ioctls.wait = wait
+        self.assertEqual(self.snap(), "sent")
+        self.assertEqual(self.ioctls.ids(), [1, 3, 4])
+        self.assertEqual(self.kb.switched, [1])
+        self.assertEqual(port.written[0][2:4], bytes([0, 0x10 | port.written[0][3] & 0x0F]))  # a ping came first
+
     def test_waiting_for_its_turn_counts_too(self):
         """Read in time, but the mouse's own requests keep the request back past KEYS_FRESH: not sent."""
         for hold, expected in ((0.6, "late"), (0.05, "sent")):

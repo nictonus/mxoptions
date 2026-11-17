@@ -243,6 +243,12 @@ def _snap_switch(dev, host, deadline):
     (_view): its cancel, once set, stops the asking and the request. "sent", or why not: "held", "unknown",
     "late", "cancelled". The request cannot be taken back once it has gone, whatever is called off after."""
     view = dev.transport
+    # An idle keyboard on Bluetooth answers its first request late (74 to 772 ms measured on an MX Mechanical),
+    # then each in about 45 ms: woken with a ping first, outside KEYS_FRESH, its reads fit in it. No answer: read anyway.
+    try:
+        view.ping(dev.devidx)
+    except HidppCancelled:
+        return "cancelled" if view.cancel.is_set() else "late"
     first = time.monotonic()  # before the first read: no part of the answer is older
     fresh_by = min(deadline, first + KEYS_FRESH)
     held = view.keys_held(fresh_by)

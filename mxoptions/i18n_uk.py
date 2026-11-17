@@ -181,6 +181,13 @@ STRINGS = {
     "Mouse and keyboard move together": "Миша й клавіатура переходять разом",
     "Mouse and keyboard move on their own": "Миша й клавіатура переходять окремо",
     "Mouse and keyboard move together once Flow is on": "Миша й клавіатура переходитимуть разом, коли Flow увімкнено",
+    "Mouse and keyboard stay here": "Миша й клавіатура залишаються тут",
+    "Mouse and keyboard stay here: {reason}": "Миша й клавіатура залишаються тут: {reason}",
+    "a key is held down": "натиснуто клавішу",
+    "the keyboard is busy, try again in a moment": "клавіатура зайнята, спробуйте ще раз за мить",
+    "the keyboard has no computer paired on that channel": "на цьому каналі клавіатура не має спареного комп'ютера",
+    "MX Options cannot tell whether a key of this keyboard is held down":
+        "MX Options не може визначити, чи натиснуто клавішу цієї клавіатури",
 
     # point & scroll
     "Pointer speed and how the wheels behave.": "Швидкість вказівника та поведінка коліс.",

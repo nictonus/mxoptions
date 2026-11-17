@@ -152,9 +152,13 @@ def HIDIOCGINPUT(length):  # noqa: N802 - the name of the request in linux/hidra
     return (3 << 30) | (length << 16) | (ord("H") << 8) | 0x0A
 
 
+# Generic Desktop usages that are keys: System Control up to the System Display ones, and Call Mute Toggle (HID
+# Usage Tables 1.5, section 4; the microphone key of the MX Mechanical on Bluetooth, report 0x0B).
+_SYSTEM_KEYS = ((0x80, 0xB7), (0xE1, 0xE1))
+
+
 def _system_usages(usages):
-    """Generic Desktop usages that are keys: System Control up to the System Display ones (0x80-0xB7)."""
-    return bool(usages) and all(0x80 <= low <= high <= 0xB7 for low, high in usages)
+    return bool(usages) and all(any(first <= low <= high <= last for first, last in _SYSTEM_KEYS) for low, high in usages)
 
 
 def key_reports(desc):
@@ -163,7 +167,7 @@ def key_reports(desc):
     described. None for anything not exactly understood, or with any input that is neither a key nor
     HID++: such a keyboard is not asked at all, as a key there could be down unseen.
 
-    A key field is on the Keyboard (0x07) or Consumer (0x0C) page, or Generic Desktop 0x80-0xB7 (system
+    A key field is on the Keyboard (0x07) or Consumer (0x0C) page, or Generic Desktop 0x80-0xB7 or 0xE1 (system
     keys). Each of its bits is 0 while no key is down: a one-bit field 0 to 1, or a list of keys down whose
     value 0 means "none" (HID 1.11, 6.2.2.5: a value out of the logical range is no control; usage 0 of
     pages 0x07 and 0x0C is reserved, HID Usage Tables 1.6, sections 10 and 15). A HID++ report (vendor page,

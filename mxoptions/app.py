@@ -155,6 +155,20 @@ def together_message(on, flow_on):
     return _("Mouse and keyboard move together") if flow_on else _("Mouse and keyboard move together once Flow is on")
 
 
+STAYS_REASONS = {
+    "held": "a key is held down",
+    "busy": "the keyboard is busy, try again in a moment",
+    "pairing": "the keyboard has no computer paired on that channel",
+    "unsupported": "MX Options cannot tell whether a key of this keyboard is held down",
+}
+
+
+def stays_message(why):
+    """What the tray says once an Easy-Switch of mouse and keyboard left both here (engine._switch_host)."""
+    reason = STAYS_REASONS.get(why)
+    return _("Mouse and keyboard stay here: {reason}").format(reason=_(reason)) if reason else _("Mouse and keyboard stay here")
+
+
 def tray_messages(armed, seen, found):
     """What the tray says of one state of the keyboard (``found``, or None): (armed, seen, [(text, "info" or
     "warning")]), the newest notice first and a low battery last, so that a notice never takes the warning's place.
@@ -306,6 +320,10 @@ def main(argv=None):
                 shown["update"] = False  # this message's click opens no page
                 tray.showMessage(APP_NAME, together_message(on, store.cfg["flow"]["enabled"]),
                                  QSystemTrayIcon.MessageIcon.Information)
+        elif kind == "host" and payload[0] == "stays":
+            if tray.isVisible():
+                shown["update"] = False  # this message's click opens no page
+                tray.showMessage(APP_NAME, stays_message(payload[1]), QSystemTrayIcon.MessageIcon.Warning)
         elif kind == "flow":
             store.flow.on_engine(payload)
         service.api.on_event(kind, payload)

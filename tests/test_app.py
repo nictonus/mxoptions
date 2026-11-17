@@ -194,6 +194,7 @@ def _child(result_path):
         ("together", ("flow", ("together", None))),  # the action, from the engine
         ("together again", ("flow", ("together", None))),
         ("flow asked", ("flow", ("asked", None))),
+        ("stays", ("host", ("stays", "held"))),  # an Easy-Switch of both the keyboard refused
         ("update", ("update", "99.0.0")),  # the daily check finds a newer release
         ("update again", ("update", "99.0.0")),  # said once only
         ("update clicked", "click"),
@@ -327,6 +328,7 @@ class Tray(unittest.TestCase):
             ["both low", KEYBOARD_LOW.format(9) + "\n" + MOUSE_LOW.format(12), "warning"],
             ["together", "Mouse and keyboard move together once Flow is on", "info"],  # Flow is off in the settings
             ["together again", "Mouse and keyboard move on their own", "info"],
+            ["stays", "Mouse and keyboard stay here: a key is held down", "warning"],
             ["update", "MX Options 99.0.0 is available.", "info"],
             ["battery then click", "Caps Lock off", "info"],
             ["update 2", "MX Options 99.1.0 is available.", "info"],

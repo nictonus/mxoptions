@@ -147,6 +147,7 @@ class Together(unittest.TestCase):
                 with self.assertLogs("mxoptions.engine", "INFO") as logs:
                     rig.engine._device_action(BOTH, "press")
                 self.assertIn(f"the mouse and keyboard stay ({why})", logs.output[-1])
+                self.assertEqual(rig.listener.events[-1], ("host", ("stays", why)))  # the tray says so
                 rig.settle()
                 self.assertEqual((self.mouse.switched, self.kb.switched), ([], []))
                 rig.kb._held.clear()

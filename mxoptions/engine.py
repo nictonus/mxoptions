@@ -1008,8 +1008,8 @@ class Engine:
     def _switch_host(self, host, keyboard=None):
         """The mouse to channel ``host``; with ``keyboard`` (a channel) the keyboard to that one after it
         (keyboard.KeyboardSide.go_along). Both or neither: where the keyboard is here and cannot go, the mouse stays
-        too, and the log says why. No keyboard here: the mouse alone; no mouse here, or already on ``host``: the
-        keyboard alone."""
+        too, the log says why and the tray says so (event "host", ("stays", why))). No keyboard here: the mouse alone;
+        no mouse here, or already on ``host``: the keyboard alone."""
         mouse = self.mouse
         here = mouse is not None and self.online
         along = False
@@ -1017,6 +1017,7 @@ class Engine:
             why = self.keyboard.go_along_refusal(keyboard)
             if why not in (None, "not-here"):
                 log.info("the mouse and keyboard stay (%s)", why)
+                self._emit("host", ("stays", why))
                 return
             along = why is None
         sent = False
