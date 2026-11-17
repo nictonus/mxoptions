@@ -158,7 +158,7 @@ def together_message(on, flow_on):
 STAYS_REASONS = {
     "held": "a key is held down",
     "busy": "the keyboard is busy, try again in a moment",
-    "pairing": "the keyboard has no computer paired on that channel",
+    "pairing": "the keyboard knows of no other computer paired on that channel",
     "unsupported": "MX Options cannot tell whether a key of this keyboard is held down",
 }
 

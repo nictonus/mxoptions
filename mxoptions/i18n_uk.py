@@ -185,7 +185,7 @@ STRINGS = {
     "Mouse and keyboard stay here: {reason}": "Миша й клавіатура залишаються тут: {reason}",
     "a key is held down": "натиснуто клавішу",
     "the keyboard is busy, try again in a moment": "клавіатура зайнята, спробуйте ще раз за мить",
-    "the keyboard has no computer paired on that channel": "на цьому каналі клавіатура не має спареного комп'ютера",
+    "the keyboard knows of no other computer paired on that channel": "клавіатурі не відомо іншого комп'ютера, спареного на цьому каналі",
     "MX Options cannot tell whether a key of this keyboard is held down":
         "MX Options не може визначити, чи натиснуто клавішу цієї клавіатури",
 
