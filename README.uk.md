@@ -6,6 +6,16 @@
 
 [English](README.md) — повна документація там.
 
+> **Це форк.** MX Options створив [nictonus](https://github.com/nictonus) для мишей MX Master:
+> оригінал — [nictonus/mxoptions](https://github.com/nictonus/mxoptions). Цей форк,
+> [squarrelmingji/mxoptions](https://github.com/squarrelmingji/mxoptions), додає клавіатуру Logitech
+> **MX Mechanical** у тому вигляді, як її показує Logi Options+: клавіатура з клавішами на їхніх
+> справжніх місцях, вкладки «Клавіші» / «Підсвічування» / Easy-Switch / «Налаштування», початкова
+> сторінка «Пристрої» з обома пристроями, Easy-Switch миші й клавіатури разом і сповіщення про
+> оновлення для випусків цього форка. Додатки форка так само написав Claude у Claude Code. Випуски
+> цього форка — на [його сторінці випусків](https://github.com/squarrelmingji/mxoptions/releases);
+> інструкції зі встановлення, що згадують nictonus/mxoptions, стосуються оригінального проєкту.
+
 > **Написано ШІ.** Увесь проєкт (код, інтерфейс, звуки, тести й ця документація) написав
 > [Claude](https://claude.com/claude-code), ШІ-модель Anthropic, у Claude Code. Людина,
 > [nictonus](https://github.com/nictonus),

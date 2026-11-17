@@ -6,6 +6,16 @@ service and a D-Bus API for other programs.
 
 [Українською](README.uk.md)
 
+> **This is a fork.** MX Options was made by [nictonus](https://github.com/nictonus) for MX Master
+> mice: the original is [nictonus/mxoptions](https://github.com/nictonus/mxoptions). This fork,
+> [squarrelmingji/mxoptions](https://github.com/squarrelmingji/mxoptions), adds the Logitech
+> **MX Mechanical** keyboard, laid out as Logi Options+ shows it: the keyboard drawn with its keys
+> where they really are, Keys / Backlighting / Easy-Switch / Settings tabs, a Devices start page with
+> both devices, Easy-Switch of mouse and keyboard together, and an update notice for this fork's
+> releases. The fork's additions were written the same way, by Claude in Claude Code. Releases of
+> this fork come from [its own releases page](https://github.com/squarrelmingji/mxoptions/releases);
+> install instructions below that name nictonus/mxoptions refer to the original project.
+
 > **Written by an AI.** Every part of this project (the code, the interface, the sounds, the tests
 > and this documentation) was written by [Claude](https://claude.com/claude-code), Anthropic's AI
 > model, working in Claude Code. A human, [nictonus](https://github.com/nictonus), directed the work
