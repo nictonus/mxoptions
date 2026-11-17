@@ -75,7 +75,7 @@ class MainWindow(QMainWindow):
             (_("Actions Ring"), RingPage(store), "view-grid"),
             # for both devices, at the foot of the sidebar: Flow, and the app's own settings
             (_("Flow"), FlowPage(store), "network-connect"),
-            (_("Device & app"), DevicePage(store), "configure"),
+            (_("Device & app"), self._device_page(store), "configure"),
         ]
         foot = range(len(pages) - 2, len(pages))  # their buttons are made last, so that Tab reaches them last as well
         for index, (title, page, icon) in enumerate(pages):
@@ -233,6 +233,14 @@ class MainWindow(QMainWindow):
                 if state["known"] else
                 _("Looking for your mouse… Turn it on and make sure its receiver is plugged in.")
             )
+
+    def _device_page(self, store):
+        self.device_page = DevicePage(store)
+        return self.device_page
+
+    def open_page(self, page):
+        """Show ``page`` (one of the stack's), its sidebar button checked."""
+        self._open(self.stack.indexOf(page))
 
     def _open(self, index):
         """Show page ``index`` of the stack, its sidebar button checked."""

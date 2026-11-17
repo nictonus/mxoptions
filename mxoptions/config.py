@@ -346,7 +346,8 @@ DEFAULTS = {
     },
     "app": {"language": "auto", "theme": "graphite", "accent": "#2fd6a7", "model": "photo", "mouse_color": "graphite",
             "tray_icon": "outline",  # the look of the icon in the system tray
-            "api": True},  # let other programs talk to the app over D-Bus
+            "api": True,  # let other programs talk to the app over D-Bus
+            "update_check": True},  # once a day, ask GitHub whether a newer release is out (updates.py)
     # One mouse on two or three computers, see flow.py
     "flow": {
         "enabled": False,
@@ -915,7 +916,8 @@ def _sanitize(cfg):
     if cfg["wheel"].get("mode") not in ("ratchet", "freespin"):
         cfg["wheel"]["mode"] = "ratchet"
     for section, key in (("wheel", "smartshift"), ("wheel", "natural"), ("wheel", "smooth"), ("thumbwheel", "invert"),
-                         ("thumbwheel", "ticks"), ("haptics", "enabled"), ("haptics", "feedback"), ("app", "api")):
+                         ("thumbwheel", "ticks"), ("haptics", "enabled"), ("haptics", "feedback"), ("app", "api"),
+                         ("app", "update_check")):
         cfg[section][key] = bool(cfg[section].get(key))
     click, default_click = cfg["wheel_click"], DEFAULTS["wheel_click"]
     if click.get("mode") not in WHEEL_CLICK_MODES:

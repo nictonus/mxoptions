@@ -39,6 +39,7 @@ class Store(QObject):
         self.sounds = sounds  # WheelSounds, for the pages that let the user hear a click
         self.flow = None      # flow_service.FlowService, once the program has made it
         self.front = None     # front.Front, once the program has made it: which app is in front
+        self.updates = None   # ui.updates.Checker, once made (ui.updates.checker_for)
         self.mouse_app = None  # the app whose mouse settings the pages show; None: all apps. Never saved.
         self.state = {"connected": False, "known": False, "name": "", "uinput": True, "rivals": [], "battery": None,
                       "current_host": 0, "hosts": [], "receiver": None, "dpi": cfg["pointer"]["dpi"], "wheel_mode": "",

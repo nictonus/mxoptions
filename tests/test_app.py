@@ -27,7 +27,8 @@ def _child(result_path):
     from mxoptions import api, app, device, flow_service, front
     from mxoptions.ui import main_window, ring, sounds, tray_icon
 
-    seen = {"errors": [], "icons": [], "messages": [], "tooltip": None, "finished": False, "status": None, "flow": []}
+    seen = {"errors": [], "icons": [], "messages": [], "tooltip": None, "finished": False, "status": None, "flow": [],
+            "opened": []}
     step = {"name": "start"}
     drawn = {}  # the last icon tray_icon.icon made, and what it shows
 
@@ -48,6 +49,10 @@ def _child(result_path):
         """A tray with a panel to show in, which says what it is given."""
 
         visible = False
+
+        def __init__(self, *args):
+            super().__init__(*args)
+            made["tray"] = self
 
         @staticmethod
         def isSystemTrayAvailable():
@@ -111,8 +116,13 @@ def _child(result_path):
             pass
 
     class Window:
+        device_page = "device page"
+
         def __init__(self, store, hide_on_close=False):
             pass
+
+        def open_page(self, page):
+            seen["opened"].append([step["name"], page])
 
         def show_and_raise(self):
             pass
@@ -180,14 +190,27 @@ def _child(result_path):
         ("together", ("flow", ("together", None))),  # the action, from the engine
         ("together again", ("flow", ("together", None))),
         ("flow asked", ("flow", ("asked", None))),
+        ("update", ("update", "99.0.0")),  # the daily check finds a newer release
+        ("update again", ("update", "99.0.0")),  # said once only
+        ("update clicked", "click"),
+        ("battery then click", ("battery", None)),
     ]
 
     def scenario():
         try:
             for name, what in steps:
                 step["name"] = name
-                if isinstance(what, str):
+                if what == "click":
+                    made["tray"].messageClicked.emit()
+                elif isinstance(what, str):
                     made["store"].set("app", "tray_icon", what)
+                elif isinstance(what, tuple) and what[0] == "update":
+                    made["store"].updates.result.emit({"state": "available", "version": what[1],
+                                                       "page": "https://github.com/x", "error": ""})
+                elif isinstance(what, tuple) and what[0] == "battery":
+                    caps_off = {"seq": 3, "kind": "locks", "keys": {"caps_lock": False}}
+                    made["listener"].on_state(mouse(12, keyboard(9, caps_off)))  # another message: its click opens no page
+                    made["tray"].messageClicked.emit()
                 elif isinstance(what, tuple):
                     made["listener"].on_event(*what)
                 else:
@@ -287,7 +310,12 @@ class Tray(unittest.TestCase):
             ["both low", KEYBOARD_LOW.format(9) + "\n" + MOUSE_LOW.format(12), "warning"],
             ["together", "Mouse and keyboard move together once Flow is on", "info"],  # Flow is off in the settings
             ["together again", "Mouse and keyboard move on their own", "info"],
+            ["update", "MX Options 99.0.0 is available.", "info"],
+            ["battery then click", "Caps Lock off", "info"],
         ], self.output)
+
+    def test_a_new_release_is_said_once_and_its_message_opens_device_and_app(self):
+        self.assertEqual(self.result()["opened"], [["update clicked", "device page"]], self.output)
 
     def test_the_together_action_flips_the_follow_settings_and_other_flow_events_go_to_flow(self):
         self.assertEqual(self.result()["flow"], [["asked", None]], self.output)

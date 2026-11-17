@@ -133,6 +133,9 @@ gate a stable release through `ops/ship/hardware-gates.json` (see Release eligib
   older than that tip: the tools never run from the commit being deployed or rolled back to.
   `publish` and `point` refuse `main` tip itself before any change, also from another directory,
   so a commit is publishable once a newer commit lands on `main`.
+- Version per release: a release first bumps `__version__` in `mxoptions/__init__.py` (PEP 440, e.g.
+  `0.10.0.post2`, `0.10.1`) in its own pull request; `publish` refuses a version already released, and the
+  app's update notice (`mxoptions/updates.py`) offers a release only when its version is newer.
 - Read serving version: `python3 ops/ship/release.py serving`; returns the `latest` tag, its
   commit and tree.
 - Detect in-flight deploy and read one operation: `python3 ops/ship/release.py inflight` (exit 10

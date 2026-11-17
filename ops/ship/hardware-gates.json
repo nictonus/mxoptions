@@ -51,6 +51,7 @@
     "mxoptions/rawmouse_windows.py",
     "mxoptions/rumble.py",
     "mxoptions/rumble_windows.py",
+    "mxoptions/updates.py",
     "mxoptions/ui/__init__.py",
     "mxoptions/ui/icons.py",
     "mxoptions/ui/mouse_*.py",
@@ -58,6 +59,7 @@
     "mxoptions/ui/sounds.py",
     "mxoptions/ui/theme.py",
     "mxoptions/ui/tray_icon.py",
+    "mxoptions/ui/updates.py",
     "mxoptions/ui/widgets.py",
     "data/mxoptions.desktop",
     "data/mxoptions.in"

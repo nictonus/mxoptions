@@ -11,6 +11,26 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Qt objects must be destroyed on the thread they live on (the GUI one). Python's cyclic collector runs on whichever
+# thread happens to allocate, here often a keyboard or worker thread of a test: a page or a store collected there
+# tears down its timers from the wrong thread (Qt warns, and may crash later). So: no automatic collection in the
+# tests; everything left over is collected after each test, on this thread.
+import gc  # noqa: E402
+import unittest  # noqa: E402
+
+gc.disable()
+_run = unittest.TestCase.run
+
+
+def _run_then_collect(self, result=None):
+    try:
+        return _run(self, result)
+    finally:
+        gc.collect()
+
+
+unittest.TestCase.run = _run_then_collect
+
 from mxoptions import config, device, engine, hidpp, vinput  # noqa: E402
 
 

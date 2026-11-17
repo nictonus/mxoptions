@@ -255,6 +255,8 @@ def main(argv=None):
     sounds.configure(cfg["wheel_click"])
     store = Store(cfg, engine, sounds)
     store.flow = flow_service.FlowService(store, app)
+    from .ui import updates as update_check
+    update_check.checker_for(store).start()  # the daily check: only the program itself runs it
     store.front = front.Front(engine, app)
     bridge.state.connect(store.update_state)
     bridge.seeded.connect(lambda seeded: store.replace(seeded, push=False))
@@ -377,11 +379,30 @@ def main(argv=None):
         low["armed"], shown["notice"], messages = tray_messages(low["armed"], shown["notice"], state.get("keyboard"))
         low["mouse"], messages = mouse_messages(low["mouse"], state, messages)
         for text, kind in messages if tray.isVisible() else ():  # hidden: said to no one, and not said later either
+            shown["update"] = False
             tray.showMessage(APP_NAME, text, QSystemTrayIcon.MessageIcon.Warning if kind == "warning"
                              else QSystemTrayIcon.MessageIcon.Information)
 
     store.state_changed.connect(tray_state)
 
+    shown["update"] = False  # the last message the tray showed is the one of a new release
+
+    def update_found(result):
+        checker = store.updates
+        if result["state"] != "available" or result["version"] == checker.state["notified"] or not tray.isVisible():
+            return
+        tray.showMessage(APP_NAME, _("MX Options {version} is available.").format(version=result["version"]),
+                         QSystemTrayIcon.MessageIcon.Information)
+        shown["update"] = True
+        checker.mark_notified(result["version"])
+
+    def message_clicked():
+        window.show_and_raise()
+        if shown["update"]:
+            window.open_page(window.device_page)
+
+    store.updates.result.connect(update_found)
+    tray.messageClicked.connect(message_clicked)
     tray_wait = QTimer(app)  # at login the service may be up before the panel that hosts the tray
     tray_wait.setInterval(2000)
 

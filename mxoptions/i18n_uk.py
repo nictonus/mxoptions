@@ -151,6 +151,27 @@ STRINGS = {
     "Bluetooth": "Bluetooth",
     "Receiver": "Приймач",
     "Customize ring": "Налаштувати кільце",
+    "App updates": "Оновлення програми",
+    "Check now": "Перевірити зараз",
+    "Checking…": "Перевірка…",
+    "Copy commands": "Копіювати команди",
+    "Could not check for updates.": "Не вдалося перевірити оновлення.",
+    "Download \"Source code (tar.gz)\" from the release page, then in the folder it is in run:":
+        "Завантажте «Source code (tar.gz)» зі сторінки випуску, потім у теці з ним виконайте:",
+    "Download it from the release page.": "Завантажте її зі сторінки випуску.",
+    "Download {name} from the release page, then in the folder it is in run:":
+        "Завантажте {name} зі сторінки випуску, потім у теці з ним виконайте:",
+    "MX Options {current} is up to date.": "MX Options {current} — найновіша версія.",
+    "MX Options {version} is available.": "Доступна MX Options {version}.",
+    "No release has been published yet.": "Ще не опубліковано жодного випуску.",
+    "Not checked yet.": "Ще не перевірено.",
+    "Once a day the app asks GitHub for the latest release of MX Options. GitHub sees the request, as for any web page; the app adds its version number and nothing about your devices or settings. Off: no automatic checks; Check now still asks.":
+        "Раз на день програма питає GitHub про найновіший випуск MX Options. GitHub бачить запит, як для будь-якої "
+        "вебсторінки; програма додає лише номер своєї версії, нічого про ваші пристрої чи налаштування. Вимкнено: "
+        "без автоматичних перевірок; «Перевірити зараз» усе одно питає.",
+    "Use the Python this app runs with: {path}": "Використайте Python, з яким працює програма: {path}",
+    "Version {version} is available (you have {current}).": "Доступна версія {version} (у вас {current}).",
+    "What's new": "Що нового",
     "Done": "Готово",
     "Layout": "Макет",
     "Style": "Стиль",

@@ -303,6 +303,15 @@ systemctl --user enable --now mxoptions.service
 python3 main.py
 ```
 
+## Updates
+
+Once a day the app asks GitHub for the latest stable release of this fork (`squarrelmingji/mxoptions`). GitHub sees
+the request, as for any web page; the app adds its version number and nothing about your devices or settings.
+Pre-releases and CI builds are never offered. When a newer version is out, the tray says so once, and Device & app
+shows it with links to the release and, for a `.deb` or a `make install-user` installation, the commands that
+update it. Nothing is downloaded or installed by the app itself. Turn the check off under Device & app → App
+updates; "Check now" there still asks. A copy installed before this feature existed has to be updated by hand once.
+
 ## Running as a service
 
 An installation brings a systemd *user* service, `mxoptions.service`, tied to your graphical

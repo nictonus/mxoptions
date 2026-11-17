@@ -6,17 +6,18 @@ import sys
 import threading
 import time
 
-from PySide6.QtCore import QObject, QStandardPaths, Qt, QTimer, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QObject, QStandardPaths, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QColor, QDesktopServices, QFontDatabase
 from PySide6.QtWidgets import (
     QApplication, QColorDialog, QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton,
     QScrollArea, QVBoxLayout, QWidget,
 )
 
-from .. import APP_NAME, __version__, actions, api, config, desktop, device, firmware
+from .. import APP_NAME, __version__, actions, api, config, desktop, device, firmware, updates
 from ..i18n import _
 from .action_picker import ActionPicker
 from . import mouse_photo
+from . import updates as updates_ui
 from .mouse_view import MouseView
 from .recorder import ShortcutRecorder
 from . import theme
@@ -991,6 +992,58 @@ class DevicePage(ScrollPage):
         self._firmware_entries, self._firmware_checked, self._firmware_for = [], False, None
         self.body.addWidget(card)
 
+        # this app's own updates: asked of GitHub (updates.py); nothing is downloaded or installed here
+        card = Card(_("App updates"))
+        self.update_switch = Switch()
+        self.update_switch.setAccessibleName(_("Check for updates"))
+        self.update_switch.toggled.connect(lambda on: self.store.set("app", "update_check", on))
+        card.add(Row(_("Check for updates"), _(
+            "Once a day the app asks GitHub for the latest release of MX Options. GitHub sees the request, as for any "
+            "web page; the app adds its version number and nothing about your devices or settings. Off: no automatic "
+            "checks; Check now still asks."), self.update_switch))
+        self.update_status = QLabel()
+        self.update_status.setObjectName("rowHint")
+        self.update_status.setWordWrap(True)
+        card.add_plain(self.update_status)
+        buttons = QWidget()
+        line = QHBoxLayout(buttons)
+        line.setContentsMargins(0, 0, 0, 0)
+        line.setSpacing(10)
+        self.update_now = QPushButton(_("Check now"))
+        self.update_now.clicked.connect(lambda: updates_ui.checker_for(self.store).check_now())
+        self.update_notes = QPushButton(_("What's new"))
+        self.update_download = QPushButton(_("Download"))
+        for button in (self.update_notes, self.update_download):
+            button.clicked.connect(self._open_release)
+        for button in (self.update_now, self.update_notes, self.update_download):
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            line.addWidget(button)
+        line.addStretch(1)
+        card.add_plain(buttons)
+        self.update_steps = hint_label("")
+        card.add_plain(self.update_steps)
+        steps = QWidget()
+        line = QHBoxLayout(steps)
+        line.setContentsMargins(0, 0, 0, 0)
+        line.setSpacing(10)
+        self.update_commands = QLabel()
+        self.update_commands.setObjectName("summary")
+        self.update_commands.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        self.update_commands.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.update_commands.setWordWrap(True)
+        line.addWidget(self.update_commands, 1)
+        self.update_copy = QPushButton(_("Copy commands"))
+        self.update_copy.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.update_copy.clicked.connect(lambda: QApplication.clipboard().setText(self.update_commands.text()))
+        line.addWidget(self.update_copy, 0, Qt.AlignmentFlag.AlignTop)
+        self.update_steps_row = steps
+        card.add_plain(steps)
+        self.updates_card = card
+        self._update_page = ""
+        self.body.addWidget(card)
+        checker = updates_ui.checker_for(store)
+        checker.result.connect(self._show_update)
+
         card = Card(_("Appearance"))
         self.theme = Segmented([(key, _(label)) for key, label in theme.THEME_LABELS])
         self.theme.selected.connect(lambda value: self.store.set("app", "theme", value))
@@ -1136,6 +1189,36 @@ class DevicePage(ScrollPage):
                      "publishes for Linux. MX Options does not flash anything itself.")
         row.note.setText(text)
 
+    def _show_update(self, result):
+        current = __version__
+        texts = {
+            "current": _("MX Options {current} is up to date.").format(current=current),
+            "available": _("Version {version} is available (you have {current}).").format(
+                version=result["version"], current=current),
+            "none": _("No release has been published yet."),
+            "failed": _("Could not check for updates."),
+            "checking": _("Checking…"),
+            "unknown": _("Not checked yet."),
+        }
+        self.update_status.setText(texts.get(result["state"], ""))
+        self.update_status.setToolTip(result["error"] if result["state"] == "failed" else "")
+        self.update_now.setEnabled(result["state"] != "checking")
+        available = result["state"] == "available" and updates.release_page(result["page"]) is not None
+        self._update_page = result["page"] if available else ""
+        self.update_notes.setVisible(available)
+        self.update_download.setVisible(available)
+        kind = updates.install_kind()
+        commands = updates.update_commands(kind, result["version"]) if available else ""
+        self.update_steps.setText(updates.update_text(kind, result["version"]) if available else "")
+        self.update_steps.setVisible(available)
+        self.update_commands.setText(commands)
+        self.update_steps_row.setVisible(bool(commands))
+
+    def _open_release(self):
+        page = updates.release_page(self._update_page)
+        if page:
+            QDesktopServices.openUrl(QUrl(page))
+
     def showEvent(self, event):
         super().showEvent(event)
         if self._firmware_for != self.store.state.get("name"):
@@ -1203,6 +1286,8 @@ class DevicePage(ScrollPage):
             self.tray.set_options([(value, _(label), tray_icon.preview(value, theme.TEXT)) for value, label in TRAY_LABELS])
         self.tray.set_value(app["tray_icon"])
         self.api.set_checked_silently(app["api"])
+        self.update_switch.set_checked_silently(app["update_check"])
+        self._show_update(updates_ui.checker_for(self.store).last())
         self.api_example_row.setEnabled(app["api"])
         self.language.set_value(app["language"])
 
