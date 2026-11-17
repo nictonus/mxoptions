@@ -28,7 +28,10 @@ def _child(result_path):
     from mxoptions.ui import main_window, ring, sounds, tray_icon
 
     seen = {"errors": [], "icons": [], "messages": [], "tooltip": None, "finished": False, "status": None, "flow": [],
-            "opened": []}
+            "opened": [], "gc_enabled": None, "gc_threads": [], "gc_at_flow": None}
+    import gc
+    import time
+    gc.callbacks.append(lambda phase, _info: phase == "start" and seen["gc_threads"].append(threading.current_thread().name))
     step = {"name": "start"}
     drawn = {}  # the last icon tray_icon.icon made, and what it shows
 
@@ -149,7 +152,8 @@ def _child(result_path):
         together = False
 
         def __init__(self, *_args):
-            pass
+            if seen["gc_at_flow"] is None:  # the Flow service starts its worker here: the guard must be on already
+                seen["gc_at_flow"] = gc.isenabled()
 
         def toggle_together(self):
             self.together = not self.together
@@ -194,6 +198,9 @@ def _child(result_path):
         ("update again", ("update", "99.0.0")),  # said once only
         ("update clicked", "click"),
         ("battery then click", ("battery", None)),
+        ("update 2", ("update", "99.1.0")),
+        ("together then click", "together_click"),  # a Flow message after the update one: its click opens no page
+        ("collect", "collect"),  # the program's own collector runs, on this thread
     ]
 
     def scenario():
@@ -202,6 +209,15 @@ def _child(result_path):
                 step["name"] = name
                 if what == "click":
                     made["tray"].messageClicked.emit()
+                elif what == "together_click":
+                    made["listener"].on_event("flow", ("together", None))
+                    made["tray"].messageClicked.emit()
+                elif what == "collect":
+                    seen["gc_enabled"] = gc.isenabled()
+                    end = time.monotonic() + 2
+                    while not seen["gc_threads"] and time.monotonic() < end:
+                        QApplication.instance().processEvents()
+                        time.sleep(0.01)
                 elif isinstance(what, str):
                     made["store"].set("app", "tray_icon", what)
                 elif isinstance(what, tuple) and what[0] == "update":
@@ -225,6 +241,7 @@ def _child(result_path):
 
     tray_icon.icon, tray_icon.install, tray_icon.announce = icon, lambda *_args: False, no_announce
     app.QSystemTrayIcon, app.Engine = Tray, Engine
+    app.GC_PERIOD = 0.05
     app._socket_name = lambda: f"mxoptions-test-{os.getpid()}"
     ring.create_overlay = lambda _parent=None: Overlay()
     sounds.WheelSounds, main_window.MainWindow, api.Service = Sounds, Window, Service
@@ -312,7 +329,16 @@ class Tray(unittest.TestCase):
             ["together again", "Mouse and keyboard move on their own", "info"],
             ["update", "MX Options 99.0.0 is available.", "info"],
             ["battery then click", "Caps Lock off", "info"],
+            ["update 2", "MX Options 99.1.0 is available.", "info"],
+            ["together then click", "Mouse and keyboard move together once Flow is on", "info"],
         ], self.output)
+
+    def test_cycles_are_collected_on_the_gui_thread_only(self):
+        seen = self.result()
+        self.assertIs(seen["gc_enabled"], False, self.output)
+        self.assertIs(seen["gc_at_flow"], False, self.output)
+        self.assertTrue(seen["gc_threads"], self.output)
+        self.assertEqual(set(seen["gc_threads"]), {"MainThread"}, self.output)
 
     def test_a_new_release_is_said_once_and_its_message_opens_device_and_app(self):
         self.assertEqual(self.result()["opened"], [["update clicked", "device page"]], self.output)
