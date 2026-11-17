@@ -156,7 +156,7 @@ STRINGS = {
     "Style": "Стиль",
     "Mouse channel": "Канал миші",
     "Keyboard channel": "Канал клавіатури",
-    "Mouse and keyboard together: on/off": "Миша й клавіатура разом: увімк./вимк.",
+    "Move together: on/off": "Разом: увімк./вимк.",
     "Mouse and keyboard move together": "Миша й клавіатура переходять разом",
     "Mouse and keyboard move on their own": "Миша й клавіатура переходять окремо",
     "Mouse and keyboard move together once Flow is on": "Миша й клавіатура переходитимуть разом, коли Flow увімкнено",

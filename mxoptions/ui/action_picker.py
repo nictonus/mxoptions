@@ -112,11 +112,12 @@ class ActionList(QWidget):
                 row.clicked.connect(lambda _checked=False, p=preset: self.picked.emit(copy.deepcopy(p.action)))
                 self._rows[preset.id] = row
                 rows.append((row, None))
-            if category == "easyswitch":  # Options+'s "Easy-Switch 2 devices": set up in a dialog
-                self.two_row = self._row(_("Easy-Switch 2 devices"), "computer")
-                self.two_summary = self._summary()
-                self.two_row.clicked.connect(lambda: self._edit_with(EasySwitchDialog, "host"))
-                rows.append((self.two_row, self.two_summary))
+                if preset.id == "host_3" or (category == "easyswitch" and preset is presets[-1] and self.two_row is None):
+                    # Options+'s "Easy-Switch 2 devices", set up in a dialog: with the other Easy-Switch rows
+                    self.two_row = self._row(_("Easy-Switch 2 devices"), "computer")
+                    self.two_summary = self._summary()
+                    self.two_row.clicked.connect(lambda: self._edit_with(EasySwitchDialog, "host"))
+                    rows.append((self.two_row, self.two_summary))
             self._sections.append((label, rows))
 
         label = self._category(_("Custom"))

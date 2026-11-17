@@ -163,7 +163,7 @@ _PRESETS = [
     ("host_1", "easyswitch", "Easy-Switch 1", "computer", {"type": "host", "host": 0}),
     ("host_2", "easyswitch", "Easy-Switch 2", "computer", {"type": "host", "host": 1}),
     ("host_3", "easyswitch", "Easy-Switch 3", "computer", {"type": "host", "host": 2}),
-    ("together", "easyswitch", "Mouse and keyboard together: on/off", "insert-link", {"type": "together"}),
+    ("together", "easyswitch", "Move together: on/off", "insert-link", {"type": "together"}),
     ("flow", "easyswitch", "Move to the other computer (Flow)", "transform-move", {"type": "flow"}),
 ]
 

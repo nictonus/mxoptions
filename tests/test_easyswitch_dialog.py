@@ -114,6 +114,29 @@ class Picker(unittest.TestCase):
         listing.set_current(actions.PRESET_BY_ID["host_2"].action)  # a plain Easy-Switch: its own row
         self.assertFalse(listing.two_row.isChecked())
 
+    def test_the_row_comes_right_after_easy_switch_3_and_the_names_fit(self):
+        from mxoptions.ui import theme
+        old_style, old_sheet = APP.style().objectName(), APP.styleSheet()
+        self.addCleanup(lambda: (APP.setStyle(old_style), APP.setStyleSheet(old_sheet)))
+        APP.setStyle("Fusion")
+        theme.apply(APP)  # the app's own fonts and padding, as the window has them
+        store = make_store()
+        store.update_state(state())
+        made = window(store)
+        self.addCleanup(gone, made)
+        made.resize(1180, 700)
+        made._open(0)  # Buttons
+        made.buttons_page.view.select("middle")
+        settle()
+        listing = made.buttons_page.picker.list
+        body = listing._body
+        order = [body.itemAt(i).widget() for i in range(body.count()) if body.itemAt(i).widget() is not None]
+        at = order.index(listing._rows["host_3"])
+        self.assertEqual(order[at + 1:at + 3], [listing.two_row, listing.two_summary])
+        self.assertLess(order.index(listing.two_row), order.index(listing._rows["together"]))
+        for row in (listing.two_row, listing._rows["together"]):  # whole: an elided row says itself in its tooltip
+            self.assertEqual(row.toolTip(), "", row.text())
+
     def test_no_row_among_a_macro_s_steps(self):
         listing = action_picker.ActionList(exclude=editors.STEP_EXCLUDE)
         self.addCleanup(gone, listing)
