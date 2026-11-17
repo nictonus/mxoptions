@@ -3,7 +3,7 @@
 import math
 
 from PySide6.QtCore import Property, QEasingCurve, QPoint, QPointF, QPropertyAnimation, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFontMetricsF, QPainter, QPen, QTextLayout, QTextOption
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QFontMetricsF, QPainter, QPen, QTextLayout, QTextOption
 from PySide6.QtWidgets import (
     QAbstractButton, QApplication, QButtonGroup, QComboBox, QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel,
     QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget,
@@ -383,6 +383,20 @@ class SliderRow(QWidget):
         self.value_label.setText(self._fmt.format(self.value()))
 
 
+class _SegmentButton(QPushButton):
+    """An option of a Segmented: as wide as its text in the heavier weight the chosen one is drawn with
+    (theme.py), so that choosing it never cuts the text off."""
+
+    def sizeHint(self):
+        hint = super().sizeHint()
+        heavy = QFont(self.font())
+        heavy.setWeight(QFont.Weight.Bold)
+        extra = QFontMetrics(heavy).horizontalAdvance(self.text()) - self.fontMetrics().horizontalAdvance(self.text())
+        return QSize(hint.width() + max(0, extra), hint.height())
+
+    minimumSizeHint = sizeHint
+
+
 class Segmented(QFrame):
     """Exclusive row of options. ``options`` is [(value, label)]."""
 
@@ -399,7 +413,7 @@ class Segmented(QFrame):
         self._group.setExclusive(True)
         self._buttons = {}
         for value, label in options:
-            button = QPushButton(label)
+            button = _SegmentButton(label)
             button.setObjectName("segmentButton")
             button.setCheckable(True)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -610,6 +624,7 @@ class ElidedLabel(QLabel):
         super().__init__(parent)
         self._full = text
         self._mode = mode
+        self.setToolTip(text)  # as setText: the whole text, however short it is shown
         self._apply()
 
     def setText(self, text):

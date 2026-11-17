@@ -341,9 +341,12 @@ class FlowPage(ScrollPage):
         self.finish()
 
         store.changed.connect(self._refresh)
-        store.state_changed.connect(lambda _state: self._refresh())
+        store.state_changed.connect(self._state_changed)  # a method: Qt drops it with the page, a lambda outlives it
         if store.flow is not None:
             store.flow.changed.connect(self._refresh)
+        self._refresh()
+
+    def _state_changed(self, _state):
         self._refresh()
 
     # -- actions -----------------------------------------------------------------

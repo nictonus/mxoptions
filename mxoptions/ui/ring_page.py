@@ -474,12 +474,17 @@ class RingPage(QWidget):
         if event.key() == Qt.Key.Key_Escape and self._customizing:  # popups and menus get theirs first
             self.set_customizing(False)
             return
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and self.customize.hasFocus():
+            self.customize.click()  # a push button outside a dialog takes Space only
+            return
         super().keyPressEvent(event)
 
     def hideEvent(self, event):
         super().hideEvent(event)
         self.set_customizing(False, focus=False)
-        self._path = []  # back to the top of the ring when shown again
+        self.layout_tab.setChecked(True)  # shown again as it opens: Layout, the ring blurred, at its top
+        self.sections.setCurrentIndex(0)
+        self._path = []
         self._refresh()
 
     def _app_changed(self):

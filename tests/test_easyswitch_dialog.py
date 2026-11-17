@@ -116,8 +116,8 @@ class Picker(unittest.TestCase):
 
     def test_the_row_comes_right_after_easy_switch_3_and_the_names_fit(self):
         from mxoptions.ui import theme
-        old_style, old_sheet = APP.style().objectName(), APP.styleSheet()
-        self.addCleanup(lambda: (APP.setStyle(old_style), APP.setStyleSheet(old_sheet)))
+        old_style, old_sheet, old_palette = APP.style().objectName(), APP.styleSheet(), APP.palette()
+        self.addCleanup(lambda: (APP.setStyle(old_style), APP.setStyleSheet(old_sheet), APP.setPalette(old_palette)))
         APP.setStyle("Fusion")
         theme.apply(APP)  # the app's own fonts and padding, as the window has them
         store = make_store()
